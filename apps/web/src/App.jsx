@@ -47,21 +47,34 @@ export default function App() {
   const [custForm, setCustForm] = useState(null);
   const [tktView, setTktView] = useState('list'); // list | form
   const [tktForm, setTktForm] = useState(null);
+  const [feedback, setFeedback] = useState([]);
+  const [fbForm, setFbForm] = useState({ contact_id: '', body: '' });
+  const [fbOpen, setFbOpen] = useState(false);
+  const [pipeline, setPipeline] = useState(null);
+  const [pipeStage, setPipeStage] = useState('lead');
+  const [report, setReport] = useState(null);
+  const [reportPeriod, setReportPeriod] = useState('daily');
+  const [reportLoading, setReportLoading] = useState(false);
+  const [deptReport, setDeptReport] = useState(null); // {scope, sections}
+  const [account, setAccount] = useState(null);
+  const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
     (async () => {
       try {
-        const [d, c, f, t, p, tk, iv, fxD] = await Promise.all([
+        const [d, c, f, t, p, tk, iv, fxD, fb, pl, ac] = await Promise.all([
           api('/dashboard'), api('/contacts'), api('/ai/followups'), api('/inbox'),
           api('/products'), api('/tickets'), api('/invoices'), api('/fx'),
+          api('/feedback'), api('/pipeline'), api('/account'),
         ]);
         setDash(d.kpis); setContacts(c.contacts); setFollowups(f.followups); setThreads(t.threads);
         setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
         setTickets(tk.tickets); setTicketCounts(tk.counts);
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
         setFx(fxD);
+        setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -273,6 +286,58 @@ export default function App() {
     await refreshTickets();
     setTktView('list'); setTktForm(null);
   };
+  const refreshFeedback = async () => {
+    const f = await api('/feedback');
+    setFeedback(f.feedback);
+  };
+  const saveFeedback = async () => {
+    if (!fbForm.body.trim()) return;
+    await api('/feedback', { method: 'POST', body: JSON.stringify({ contact_id: fbForm.contact_id || null, body: fbForm.body }) });
+    setFbForm({ contact_id: '', body: '' });
+    await refreshFeedback();
+  };
+  const deleteFeedback = async (id) => {
+    if (!window.confirm('Delete this feedback note?')) return;
+    await api(`/feedback/${id}`, { method: 'DELETE' });
+    await refreshFeedback();
+  };
+  const moveStage = async (c, dir) => {
+    const order = ['lead', 'contacted', 'qualified', 'proposal_sent', 'negotiation', 'won', 'lost'];
+    const idx = order.indexOf(c.status);
+    const next = order[Math.max(0, Math.min(order.length - 1, idx + dir))];
+    await api(`/contacts/${c.id}`, { method: 'PUT', body: JSON.stringify({ status: next }) });
+    const [pl, cs] = await Promise.all([api('/pipeline'), api('/contacts')]);
+    setPipeline(pl); setContacts(cs.contacts);
+  };
+  const generateReport = async () => {
+    setReportLoading(true);
+    try {
+      const r = await api(`/ai/report?period=${reportPeriod}`);
+      setReport(r);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+  const generateDeptReport = async (scope) => {
+    const apiScope = scope === 'product' ? 'inventory' : scope;
+    const r = await api(`/ai/report?period=${reportPeriod}&scope=${apiScope}`);
+    setDeptReport({ scope, sections: r.sections, generated_at: r.generated_at });
+  };
+  const openInvEdit = (inv, items) => {
+    setInvEdit({
+      id: inv.id,
+      due_date: inv.due_date,
+      currency: inv.currency,
+      items: items.map((it) => ({ description: it.description, qty: it.qty, unit_price: it.unit_price })),
+    });
+  };
+  const saveInvEdit = async () => {
+    await api(`/invoices/${invEdit.id}`, { method: 'PUT', body: JSON.stringify({ due_date: invEdit.due_date, currency: invEdit.currency, items: invEdit.items }) });
+    const [iv, det] = await Promise.all([api('/invoices'), api(`/invoices/${invEdit.id}`)]);
+    setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
+    setActiveInv(det.invoice); setInvItems(det.items);
+    setInvEdit(null);
+  };
 
   const nav = [
     ['dashboard', '🏠', 'Dashboard'],
@@ -280,6 +345,8 @@ export default function App() {
     ['inbox', '💬', 'Inbox'],
     ['invoices', '🧾', 'Invoicing'],
     ['followups', '📞', 'Follow-ups'],
+    ['feedback', '📝', 'Feedback'],
+    ['reports', '📊', 'Reports'],
     ['ads', '📣', 'Ads Studio'],
   ];
 
@@ -288,6 +355,7 @@ export default function App() {
     ['support', '🛟 Support'],
     ['inventory', '📦 Inventory'],
     ['product', '🏷️ Product'],
+    ['account', '👤 Account'],
   ];
 
   return (
@@ -315,6 +383,27 @@ export default function App() {
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
               ))}
             </div>
+            <div className="quick-actions" style={{ marginTop: 0, marginBottom: 14 }}>
+              <button className="btn-ghost sm" onClick={() => generateDeptReport(dept)}>📊 {reportPeriod} report for this section</button>
+            </div>
+            {deptReport && deptReport.scope === dept && (
+              <div className="card report">
+                {deptReport.sections.map((s) => (
+                  <div key={s.scope}>
+                    <h3>{s.title}</h3>
+                    <ul className="ads-list">
+                      {s.summary.map((line, i) => <li key={i}>{line}</li>)}
+                    </ul>
+                    {s.rows.slice(0, 6).map((r, i) => (
+                      <div key={i} className="inv-line muted">
+                        <span>{(r.body || '').slice(0, 64)}</span>
+                        <span>{r.status || ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {dept === 'sales' && (
               <>
@@ -339,6 +428,37 @@ export default function App() {
                   <button className="btn-primary" onClick={() => setView('customers')}>Open Customer Book →</button>
                   <button className="btn-ghost" onClick={() => setView('inbox')}>Open WhatsApp Inbox →</button>
                 </div>
+                {pipeline && (
+                  <div className="card">
+                    <h3>🔁 Sales Pipeline</h3>
+                    <div className="dept-pills">
+                      {pipeline.stages.map((s) => (
+                        <button key={s.stage} className={`pill ${pipeStage === s.stage ? 'active' : ''}`} onClick={() => setPipeStage(s.stage)}>
+                          {s.stage.replace('_', ' ')} · {s.count}
+                        </button>
+                      ))}
+                    </div>
+                    {pipeline.stages.find((s) => s.stage === pipeStage)?.contacts.map((c) => (
+                      <div key={c.id} className="inv-row">
+                        <div className="thread-ava">{(c.company || c.name || '?')[0]}</div>
+                        <div className="thread-info">
+                          <b>{c.company || c.name}</b>
+                          <span>{c.phone} · {c.tags}</span>
+                        </div>
+                        <div className="inv-right">
+                          {c.deal_value_ngn > 0 && <div className="amt">{fmt(c.deal_value_ngn)}</div>}
+                          <div className="quick-actions">
+                            {pipeStage !== 'lead' && <button className="btn-ghost sm" onClick={() => moveStage(c, -1)}>◂</button>}
+                            {pipeStage !== 'lost' && pipeStage !== 'won' && <button className="btn-primary sm" onClick={() => moveStage(c, 1)}>Advance ▸</button>}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {(pipeline.stages.find((s) => s.stage === pipeStage)?.count || 0) === 0 && (
+                      <p className="muted">No contacts in this stage.</p>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -484,6 +604,31 @@ export default function App() {
                 ))}
               </div>
             ))}
+            {dept === 'account' && account && (
+              <div className="card">
+                <h3>👤 Account</h3>
+                <div className="inv-line"><span>Business</span><span>{account.user.business_name || '—'}</span></div>
+                <div className="inv-line"><span>Owner</span><span>{account.user.name}</span></div>
+                <div className="inv-line"><span>Email</span><span>{account.user.email}</span></div>
+                <div className="inv-line"><span>Plan</span><span className="chip closed">{account.plan}</span></div>
+                <h3 style={{ marginTop: 14 }}>💰 Billing</h3>
+                <div className="inv-line"><span>Conversion fees earned</span><span>{fmt(account.billing.fees_earned_ngn)}</span></div>
+                <div className="inv-line"><span>Receivables outstanding</span><span>{fmt(account.billing.receivables_ngn)}</span></div>
+                <div className="inv-line"><span>Paid invoices (all time)</span><span>{fmt(account.billing.paid_total_ngn)}</span></div>
+                <div className="inv-line"><span>Foreign-currency invoices</span><span>{account.billing.foreign_invoices}</span></div>
+                <h3 style={{ marginTop: 14 }}>🔌 Integrations</h3>
+                <div className="inv-line">
+                  <span>Paystack</span>
+                  <span className={`chip ${account.integrations.paystack ? 'closed' : 'draft'}`}>{account.integrations.paystack ? 'live' : 'demo mode'}</span>
+                </div>
+                <div className="inv-line">
+                  <span>WhatsApp Cloud API</span>
+                  <span className={`chip ${account.integrations.whatsapp_cloud_api ? 'closed' : 'draft'}`}>{account.integrations.whatsapp_cloud_api ? 'connected' : 'not connected'}</span>
+                </div>
+                <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
+                <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
+              </div>
+            )}
           </>
         )}
 
@@ -503,7 +648,9 @@ export default function App() {
               <select value={custForm.status} onChange={(e) => setCustForm({ ...custForm, status: e.target.value })}>
                 <option value="lead">Lead</option>
                 <option value="contacted">Contacted</option>
+                <option value="qualified">Qualified</option>
                 <option value="proposal_sent">Proposal sent</option>
+                <option value="negotiation">Negotiation</option>
                 <option value="won">Won</option>
                 <option value="lost">Lost</option>
               </select>
@@ -683,7 +830,58 @@ export default function App() {
               </>
             )}
 
-            {invView === 'detail' && activeInv && (
+            {invView === 'detail' && activeInv && (invEdit ? (
+              <div>
+                <h3>✏️ Edit draft invoice {activeInv.number}</h3>
+                <label className="inv-label">Due date</label>
+                <input type="date" value={invEdit.due_date} onChange={(e) => setInvEdit({ ...invEdit, due_date: e.target.value })} />
+                <label className="inv-label">Currency</label>
+                <select value={invEdit.currency} onChange={(e) => setInvEdit({ ...invEdit, currency: e.target.value })}>
+                  <option value="NGN">₦ Naira (NGN)</option>
+                  <option value="USD">$ US Dollar (USD)</option>
+                  <option value="EUR">€ Euro (EUR)</option>
+                  <option value="GBP">£ British Pound (GBP)</option>
+                </select>
+                <label className="inv-label">Items</label>
+                {invEdit.items.map((it, idx) => (
+                  <div key={idx} className="inv-item-row">
+                    <input
+                      placeholder="Description"
+                      value={it.description}
+                      onChange={(e) => {
+                        const items = [...invEdit.items];
+                        items[idx] = { ...it, description: e.target.value };
+                        setInvEdit({ ...invEdit, items });
+                      }}
+                    />
+                    <input
+                      type="number" min="1" placeholder="Qty" style={{ width: 64 }}
+                      value={it.qty}
+                      onChange={(e) => {
+                        const items = [...invEdit.items];
+                        items[idx] = { ...it, qty: e.target.value };
+                        setInvEdit({ ...invEdit, items });
+                      }}
+                    />
+                    <input
+                      type="number" min="0" placeholder="Unit" style={{ width: 100 }}
+                      value={it.unit_price}
+                      onChange={(e) => {
+                        const items = [...invEdit.items];
+                        items[idx] = { ...it, unit_price: e.target.value };
+                        setInvEdit({ ...invEdit, items });
+                      }}
+                    />
+                    <button className="btn-ghost sm" onClick={() => setInvEdit({ ...invEdit, items: invEdit.items.filter((_, j) => j !== idx) })}>✕</button>
+                  </div>
+                ))}
+                <button className="btn-ghost sm" onClick={() => setInvEdit({ ...invEdit, items: [...invEdit.items, { description: '', qty: 1, unit_price: '' }] })}>+ Add item</button>
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={saveInvEdit}>Save changes (totals recomputed)</button>
+                  <button className="btn-ghost" onClick={() => setInvEdit(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
               <>
                 <div className="convo-head">
                   <button className="btn-ghost" onClick={() => setInvView('list')}>←</button>
@@ -719,10 +917,11 @@ export default function App() {
                     )}
                     <button className="act-btn" onClick={downloadPdf}><span>⬇️</span>PDF</button>
                     <button className="act-btn" onClick={emailInvoice}><span>✉️</span>Email</button>
+                    {activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span>✏️</span>Edit</button>}
                   </div>
                 </div>
               </>
-            )}
+            ))}
           </div>
         )}
 
@@ -736,6 +935,78 @@ export default function App() {
                 <p>{f.draft}</p>
               </div>
             ))}
+          </div>
+        )}
+
+        {view === 'feedback' && (
+          <div className="card">
+            <div className="inv-head"><h3>📝 Conversation Feedback</h3><button className="btn-primary sm" onClick={() => setFbOpen(!fbOpen)}>+ Add feedback</button></div>
+            <p className="muted">Capture what customers said on calls and visits — the AI reports use it.</p>
+            {fbOpen && (
+              <>
+                <label className="inv-label">Customer (optional)</label>
+                <select value={fbForm.contact_id} onChange={(e) => setFbForm({ ...fbForm, contact_id: e.target.value })}>
+                  <option value="">General</option>
+                  {contacts.map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
+                </select>
+                <textarea
+                  className="fb-area"
+                  placeholder="e.g. Called GPFI procurement — they said management is reviewing the proposal this week…"
+                  value={fbForm.body}
+                  onChange={(e) => setFbForm({ ...fbForm, body: e.target.value })}
+                />
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={saveFeedback}>Save feedback</button>
+                </div>
+              </>
+            )}
+            {feedback.length === 0 && !fbOpen && <p className="muted">No feedback captured yet.</p>}
+            {feedback.map((f) => (
+              <div key={f.id} className="followup">
+                <b>{f.company || f.name || 'General'}</b>
+                <p>{f.body}</p>
+                <div className="quick-actions">
+                  <button className="btn-ghost sm" onClick={() => deleteFeedback(f.id)}>🗑</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {view === 'reports' && (
+          <div className="card">
+            <h3>📊 AI Activity Report</h3>
+            <div className="dept-pills">
+              {[['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly']].map(([k, label]) => (
+                <button key={k} className={`pill ${reportPeriod === k ? 'active' : ''}`} onClick={() => { setReportPeriod(k); setReport(null); }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button className="btn-primary" onClick={generateReport} disabled={reportLoading}>
+              {reportLoading ? 'Compiling…' : `Generate ${reportPeriod} report`}
+            </button>
+            {report && (
+              <div className="report">
+                <p className="muted">Generated {new Date(report.generated_at).toLocaleString()} · covers last {report.period === 'daily' ? '1 day' : report.period === 'weekly' ? '7 days' : report.period === 'monthly' ? '30 days' : '90 days'}</p>
+                {report.sections.map((s) => (
+                  <div key={s.scope}>
+                    <h3 style={{ marginTop: 14 }}>{s.title}</h3>
+                    <ul className="ads-list">
+                      {s.summary.map((line, i) => <li key={i}>{line}</li>)}
+                    </ul>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Recent items:</div>
+                    {s.rows.length === 0 && <p className="muted">None in this period.</p>}
+                    {s.rows.slice(0, 10).map((r, i) => (
+                      <div key={i} className="inv-line muted">
+                        <span>{(r.body || '').slice(0, 64)}</span>
+                        <span>{r.status || ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
