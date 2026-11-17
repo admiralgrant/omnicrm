@@ -430,7 +430,7 @@ export default function App() {
         </div>
         {view === 'dashboard' && dash && (
           <>
-            <h1>Good morning{me?.name ? `, ${me.name.split(' ')[0]}` : ''} 👋{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}</h1>
+            <h1>Good morning{me?.name ? `, ${me.name.split(' ')[0]}` : ''} 👋{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
             <div className="dept-pills">
               {depts.filter(([k]) => allowed(k)).map(([k, label]) => (
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
@@ -1650,6 +1650,11 @@ function Landing({ onLogin, onStart }) {
       </header>
 
       <section className="hero">
+        {localStorage.getItem('omnicrm_demo') && (
+          <div className="demo-banner">
+            👋 You're in a read-only guest demo — log in with <b>guest@omnicrm.ng</b> / <b>guest-demo</b> to explore. Changes are disabled.
+          </div>
+        )}
         <h1>Every business tool your company needs.<br />One app. One naira at a time.</h1>
         <p className="hero-sub">OmniCRM digitalises how nano, micro, small and enterprise businesses sell, support, stock and advertise — with AI doing the heavy lifting.</p>
         <div className="hero-cta">
@@ -1751,7 +1756,9 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
         <p className="muted switch" onClick={() => onSwitch(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Log in'}
         </p>
-        <p className="muted demo">Demo: grant@besconpaints.com / omnicrm-demo</p>
+        <p className="muted demo">{localStorage.getItem('omnicrm_demo')
+          ? 'Guest demo: guest@omnicrm.ng / guest-demo (read-only)'
+          : 'Demo: grant@besconpaints.com / omnicrm-demo'}</p>
       </div>
     </div>
   );
