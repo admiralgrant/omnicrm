@@ -41,6 +41,8 @@ export default function App() {
   const [newInv, setNewInv] = useState(null);
   const [payLink, setPayLink] = useState('');
   const [fx, setFx] = useState(null);
+  const [prodView, setProdView] = useState('list'); // list | form
+  const [prodForm, setProdForm] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -187,6 +189,32 @@ export default function App() {
     setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables);
     setNewInv(null); setInvView('list');
   };
+  const refreshProducts = async () => {
+    const p = await api('/products');
+    setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
+  };
+  const openNewProduct = () => {
+    setProdForm({ id: null, name: '', sku: '', category: 'Emulsion', stock: 0, low_stock_at: 5, unit_cost: 0, unit_price: 0 });
+    setProdView('form');
+  };
+  const openEditProduct = (p) => {
+    setProdForm({ id: p.id, name: p.name, sku: p.sku || '', category: p.category, stock: p.stock, low_stock_at: p.low_stock_at, unit_cost: p.unit_cost, unit_price: p.unit_price });
+    setProdView('form');
+  };
+  const saveProduct = async () => {
+    const { id, ...fields } = prodForm;
+    const body = JSON.stringify(fields);
+    if (id) await api(`/products/${id}`, { method: 'PUT', body });
+    else await api('/products', { method: 'POST', body });
+    await refreshProducts();
+    setProdView('list'); setProdForm(null);
+  };
+  const deleteProduct = async () => {
+    if (!window.confirm(`Delete ${prodForm.name} from the catalog?`)) return;
+    await api(`/products/${prodForm.id}`, { method: 'DELETE' });
+    await refreshProducts();
+    setProdView('list'); setProdForm(null);
+  };
 
   const nav = [
     ['dashboard', '🏠', 'Dashboard'],
@@ -280,7 +308,30 @@ export default function App() {
               </>
             )}
 
-            {dept === 'inventory' && (
+            {dept === 'inventory' && (prodView === 'form' && prodForm ? (
+              <div className="card">
+                <h3>{prodForm.id ? '✏️ Edit product' : '➕ Add product'}</h3>
+                <label className="inv-label">Product name</label>
+                <input placeholder="e.g. Emulsion Paint — Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
+                <div className="inv-item-row">
+                  <input placeholder="SKU" value={prodForm.sku} onChange={(e) => setProdForm({ ...prodForm, sku: e.target.value })} />
+                  <input placeholder="Category" value={prodForm.category} onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })} />
+                </div>
+                <div className="inv-item-row">
+                  <input type="number" min="0" placeholder="Stock qty" value={prodForm.stock} onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })} />
+                  <input type="number" min="0" placeholder="Low-stock alert at" value={prodForm.low_stock_at} onChange={(e) => setProdForm({ ...prodForm, low_stock_at: e.target.value })} />
+                </div>
+                <div className="inv-item-row">
+                  <input type="number" min="0" placeholder="Unit cost ₦" value={prodForm.unit_cost} onChange={(e) => setProdForm({ ...prodForm, unit_cost: e.target.value })} />
+                  <input type="number" min="0" placeholder="Unit price ₦" value={prodForm.unit_price} onChange={(e) => setProdForm({ ...prodForm, unit_price: e.target.value })} />
+                </div>
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={saveProduct}>{prodForm.id ? 'Save changes' : 'Add product'}</button>
+                  <button className="btn-ghost" onClick={() => { setProdView('list'); setProdForm(null); }}>Cancel</button>
+                  {prodForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteProduct}>🗑 Delete</button>}
+                </div>
+              </div>
+            ) : (
               <>
                 <div className="kpis">
                   <div className="kpi"><div className="label">Stock value (cost)</div><div className="value">{fmt(stockValue)}</div></div>
@@ -288,20 +339,51 @@ export default function App() {
                   <div className="kpi"><div className="label">SKUs tracked</div><div className="value">{products.length}</div></div>
                 </div>
                 <div className="card">
-                  <h3>⚠️ Low Stock</h3>
-                  {products.filter((p) => p.low).map((p) => (
-                    <div key={p.id} className="ticket">
-                      <div className="ticket-info"><b>{p.name}</b><span>{p.sku} · {p.category}</span></div>
-                      <span className="chip low">{p.stock} left</span>
+                  <div className="inv-head"><h3>📦 Inventory</h3><button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div>
+                  {products.map((p) => (
+                    <div key={p.id} className="inv-row">
+                      <div className="thread-ava">📦</div>
+                      <div className="thread-info">
+                        <b>{p.name}</b>
+                        <span>{p.sku} · {p.category} · alert at {p.low_stock_at}</span>
+                      </div>
+                      <div className="inv-right">
+                        <div className="inv-amt">{p.stock} units</div>
+                        {p.low && <span className="chip low">low stock</span>}
+                        <button className="btn-ghost sm" onClick={() => openEditProduct(p)}>✏️ Edit</button>
+                      </div>
                     </div>
                   ))}
                 </div>
               </>
-            )}
+            ))}
 
-            {dept === 'product' && (
+            {dept === 'product' && (prodView === 'form' && prodForm ? (
               <div className="card">
-                <h3>🏷️ Product Catalog</h3>
+                <h3>{prodForm.id ? '✏️ Edit product' : '➕ Add product'}</h3>
+                <label className="inv-label">Product name</label>
+                <input placeholder="e.g. Emulsion Paint — Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
+                <div className="inv-item-row">
+                  <input placeholder="SKU" value={prodForm.sku} onChange={(e) => setProdForm({ ...prodForm, sku: e.target.value })} />
+                  <input placeholder="Category" value={prodForm.category} onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })} />
+                </div>
+                <div className="inv-item-row">
+                  <input type="number" min="0" placeholder="Stock qty" value={prodForm.stock} onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })} />
+                  <input type="number" min="0" placeholder="Low-stock alert at" value={prodForm.low_stock_at} onChange={(e) => setProdForm({ ...prodForm, low_stock_at: e.target.value })} />
+                </div>
+                <div className="inv-item-row">
+                  <input type="number" min="0" placeholder="Unit cost ₦" value={prodForm.unit_cost} onChange={(e) => setProdForm({ ...prodForm, unit_cost: e.target.value })} />
+                  <input type="number" min="0" placeholder="Unit price ₦" value={prodForm.unit_price} onChange={(e) => setProdForm({ ...prodForm, unit_price: e.target.value })} />
+                </div>
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={saveProduct}>{prodForm.id ? 'Save changes' : 'Add product'}</button>
+                  <button className="btn-ghost" onClick={() => { setProdView('list'); setProdForm(null); }}>Cancel</button>
+                  {prodForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteProduct}>🗑 Delete</button>}
+                </div>
+              </div>
+            ) : (
+              <div className="card">
+                <div className="inv-head"><h3>🏷️ Product Catalog</h3><button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div>
                 {products.map((p) => (
                   <div key={p.id} className="prod">
                     <div className="ticket-info"><b>{p.name}</b><span>{p.sku} · {p.category}</span></div>
@@ -310,10 +392,11 @@ export default function App() {
                       <div><span className="muted">Price</span> {fmt(p.unit_price)}</div>
                       <div><span className="muted">Margin</span> {p.margin}%</div>
                     </div>
+                    <button className="btn-ghost sm" onClick={() => openEditProduct(p)}>✏️</button>
                   </div>
                 ))}
               </div>
-            )}
+            ))}
           </>
         )}
 
@@ -399,17 +482,17 @@ export default function App() {
                   <div className="kpi"><div className="label">Paid</div><div className="value">{invCounts.paid || 0}</div></div>
                 </div>
                 {invoices.map((i) => (
-                  <div key={i.id} className="thread" onClick={() => openInvoice(i)}>
+                  <div key={i.id} className="inv-row" onClick={() => openInvoice(i)}>
                     <div className="thread-ava">🧾</div>
                     <div className="thread-info">
-                      <b>{i.number} · {i.company || i.name}</b>
-                      <span>Due {i.due_date} · VAT {fmtCur(i.tax, i.currency)}</span>
+                      <b>{i.company || i.name}</b>
+                      <span>{i.number} · due {i.due_date}{i.currency !== 'NGN' ? ` · ${i.currency}` : ''}</span>
                     </div>
-                    <div className="inv-amt">
-                      {fmtCur(i.total, i.currency)}
-                      {i.currency !== 'NGN' && <span className="muted inv-equiv"> ≈ {fmt(i.ngn_total)}</span>}
+                    <div className="inv-right">
+                      <div className="inv-amt">{fmtCur(i.total + (i.fee || 0), i.currency)}</div>
+                      {i.currency !== 'NGN' && <div className="muted inv-equiv">≈ {fmt(i.ngn_total)}</div>}
+                      <span className={`chip ${i.status}`}>{i.status}</span>
                     </div>
-                    <span className={`chip ${i.status}`}>{i.status}</span>
                   </div>
                 ))}
               </>
@@ -499,19 +582,19 @@ export default function App() {
                     <div className="inv-line muted"><span>Naira equivalent @ {Number(activeInv.fx_rate).toLocaleString()}</span><span>{fmt(activeInv.ngn_total)}</span></div>
                   )}
                 </div>
-                <div className="quick-actions">
-                  {activeInv.status === 'draft' && <button className="btn-primary" onClick={sendInvoice}>Mark as sent</button>}
-                  {(activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary" onClick={payInvoice}>Mark as paid ✓</button>}
-                </div>
-                {activeInv.status !== 'paid' && (
-                  <div className="quick-actions">
-                    <button className="btn-primary" onClick={shareWhatsApp}>💬 Send via WhatsApp</button>
-                    <button className="btn-ghost" onClick={copyPayLink}>🔗 Copy pay link</button>
+                <div className="inv-actions">
+                  {activeInv.status === 'draft' && <button className="btn-primary act-primary" onClick={sendInvoice}>Mark as sent</button>}
+                  {(activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid ✓</button>}
+                  <div className="inv-actions-grid">
+                    {activeInv.status !== 'paid' && (
+                      <>
+                        <button className="act-btn" onClick={shareWhatsApp}><span>💬</span>WhatsApp</button>
+                        <button className="act-btn" onClick={copyPayLink}><span>🔗</span>Copy link</button>
+                      </>
+                    )}
+                    <button className="act-btn" onClick={downloadPdf}><span>⬇️</span>PDF</button>
+                    <button className="act-btn" onClick={emailInvoice}><span>✉️</span>Email</button>
                   </div>
-                )}
-                <div className="quick-actions">
-                  <button className="btn-ghost" onClick={downloadPdf}>⬇ Download PDF</button>
-                  <button className="btn-ghost" onClick={emailInvoice}>✉️ Email invoice</button>
                 </div>
               </>
             )}
