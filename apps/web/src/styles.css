@@ -139,6 +139,8 @@ input { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; 
 .chip.sent { background: #e8f1fd; color: #2471a3; }
 .chip.overdue { background: #fdecec; color: #c0392b; }
 .chip.draft { background: #eceff0; color: #5d6d66; }
+.inv-equiv { font-size: 11px; display: block; font-weight: 600; }
+.fx-hint { font-size: 12px; margin: 8px 0 2px; }
 select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-family: inherit; font-size: 14px; background: #fff; margin-bottom: 4px; }
 .mobile-topbar { display: none; }
 @media (max-width: 760px) {
