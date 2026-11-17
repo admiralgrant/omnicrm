@@ -149,14 +149,36 @@ export default function App() {
     const intl = String(activeInv.phone || '').replace(/^0/, '234');
     const link = `${location.origin}${payLink}`;
     const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
+    const feeLine = activeInv.fee > 0 ? `\nProcessing fee: ${fmtCur(activeInv.fee, activeInv.currency)}` : '';
     const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
-    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ${fmtCur(activeInv.total, activeInv.currency)} (incl. 7.5% VAT)${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
+    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ${fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)} (incl. 7.5% VAT${activeInv.fee > 0 ? ' + processing fee' : ''})${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
     window.open(`https://wa.me/${intl}?text=${encodeURIComponent(msg)}`, '_blank');
   };
   const copyPayLink = () => {
     const link = `${location.origin}${payLink}`;
     navigator.clipboard.writeText(link);
     alert(`Pay link copied:\n${link}`);
+  };
+  const downloadPdf = async () => {
+    const res = await fetch(`${API}/invoices/${activeInv.id}/pdf`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${activeInv.number}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const emailInvoice = () => {
+    const link = `${location.origin}${payLink}`;
+    const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
+    const feeLine = activeInv.fee > 0 ? `\nProcessing fee: ${fmtCur(activeInv.fee, activeInv.currency)}` : '';
+    const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
+    const subject = `Invoice ${activeInv.number} from ${activeInv.company || 'us'}`;
+    const body = `Hello,\n\nPlease find invoice ${activeInv.number} below.\n\n${lines}\n\nSubtotal: ${fmtCur(activeInv.subtotal, activeInv.currency)}\nVAT (7.5%): ${fmtCur(activeInv.tax, activeInv.currency)}${feeLine}\nTotal due: ${fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)}${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online:\n${link}`;
+    window.location.href = `mailto:${activeInv.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
   const saveInvoice = async () => {
     if (!newInv.contact_id || newInv.items.length === 0) return;
@@ -469,7 +491,10 @@ export default function App() {
                   ))}
                   <div className="inv-line muted"><span>Subtotal</span><span>{fmtCur(activeInv.subtotal, activeInv.currency)}</span></div>
                   <div className="inv-line muted"><span>VAT (7.5%)</span><span>{fmtCur(activeInv.tax, activeInv.currency)}</span></div>
-                  <div className="inv-line total"><span>Total</span><span>{fmtCur(activeInv.total, activeInv.currency)}</span></div>
+                  {activeInv.fee > 0 && (
+                    <div className="inv-line muted"><span>Processing fee ({(activeInv.fee_rate * 100).toFixed(1)}%)</span><span>{fmtCur(activeInv.fee, activeInv.currency)}</span></div>
+                  )}
+                  <div className="inv-line total"><span>Total</span><span>{fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)}</span></div>
                   {activeInv.currency !== 'NGN' && (
                     <div className="inv-line muted"><span>Naira equivalent @ {Number(activeInv.fx_rate).toLocaleString()}</span><span>{fmt(activeInv.ngn_total)}</span></div>
                   )}
@@ -484,6 +509,10 @@ export default function App() {
                     <button className="btn-ghost" onClick={copyPayLink}>🔗 Copy pay link</button>
                   </div>
                 )}
+                <div className="quick-actions">
+                  <button className="btn-ghost" onClick={downloadPdf}>⬇ Download PDF</button>
+                  <button className="btn-ghost" onClick={emailInvoice}>✉️ Email invoice</button>
+                </div>
               </>
             )}
           </div>
@@ -628,6 +657,7 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
   const [name, setName] = useState('');
   const [business, setBusiness] = useState('');
   const [err, setErr] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const submit = async (e) => {
     e.preventDefault();
     setErr('');
@@ -650,7 +680,12 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
             </>
           )}
           <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <div className="pw-wrap">
+            <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <button type="button" className="pw-toggle" onClick={() => setShowPw(!showPw)} aria-label="Toggle password visibility">
+              {showPw ? '🙈' : '👁️'}
+            </button>
+          </div>
           {err && <p className="err">{err}</p>}
           <button className="btn-primary" type="submit">{mode === 'login' ? 'Log in' : 'Create account'}</button>
         </form>
