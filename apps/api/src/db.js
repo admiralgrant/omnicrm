@@ -67,6 +67,31 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_contact ON messages(contact_id);
+
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  sku TEXT,
+  category TEXT DEFAULT 'General',
+  stock INTEGER NOT NULL DEFAULT 0,
+  low_stock_at INTEGER NOT NULL DEFAULT 5,
+  unit_cost REAL NOT NULL DEFAULT 0,
+  unit_price REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  contact_id INTEGER REFERENCES contacts(id),
+  subject TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',   -- open | pending | closed
+  priority TEXT NOT NULL DEFAULT 'medium', -- low | medium | high
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
 `);
 
 export default db;
