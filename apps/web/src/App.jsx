@@ -57,6 +57,17 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [deptReport, setDeptReport] = useState(null); // {scope, sections}
   const [account, setAccount] = useState(null);
+  const [me, setMe] = useState(() => {
+    const t = localStorage.getItem(tokenKey);
+    if (!t) return null;
+    try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+  }); // {name, dept, staff} — department-scoped login
+  const [orgFeats, setOrgFeats] = useState(null);
+  const [hr, setHr] = useState(null);
+  const [hrTab, setHrTab] = useState('staff');
+  const [hrForm, setHrForm] = useState(null); // add/edit staff
+  const [advForm, setAdvForm] = useState(null);
+  const [leaveForm, setLeaveForm] = useState(null);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [loading, setLoading] = useState(true);
 
@@ -75,6 +86,8 @@ export default function App() {
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
         setFx(fxD);
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
+        try { setOrgFeats((await api('/org/features')).features); } catch { /* staff-safe */ }
+        try { setHr(await api('/hr-dashboard')); } catch { /* non-HR staff */ }
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -90,6 +103,7 @@ export default function App() {
     localStorage.setItem(tokenKey, d.token);
     setAuthMode('landing');
     setView('dashboard');
+    setMe(d.user);
     setToken(d.token);
   };
   const register = async (email, password, name, business_name) => {
@@ -97,6 +111,7 @@ export default function App() {
     localStorage.setItem(tokenKey, d.token);
     setAuthMode('landing');
     setView('dashboard');
+    setMe(d.user);
     setToken(d.token);
   };
   const logout = () => { localStorage.removeItem(tokenKey); setToken(null); setAuthMode('landing'); setDash(null); setContacts([]); };
@@ -104,6 +119,19 @@ export default function App() {
   const fmt = (n) => '₦' + Number(n).toLocaleString();
   const CURS = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
   const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString();
+
+  const FRONT_ACCESS = {
+    sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'pipeline'],
+    support: ['dashboard', 'support', 'inbox', 'feedback', 'reports'],
+    inventory: ['dashboard', 'inventory', 'product', 'reports'],
+    hr: ['dashboard', 'hr', 'reports'],
+    account: ['dashboard', 'invoices', 'reports'],
+  };
+  const allowed = (section) => {
+    if (orgFeats && orgFeats[section] === false) return false;
+    if (!me || !me.dept) return true;
+    return (FRONT_ACCESS[me.dept] || []).includes(section);
+  };
 
   if (loading) return <div className="center">Loading…</div>;
 
@@ -355,6 +383,7 @@ export default function App() {
     ['support', '🛟 Support'],
     ['inventory', '📦 Inventory'],
     ['product', '🏷️ Product'],
+    ['hr', '🧑💼 HR'],
     ['account', '👤 Account'],
   ];
 
@@ -362,7 +391,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
-        {nav.map(([k, icon, label]) => (
+        {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span>{icon}</span>{label}
           </div>
@@ -377,9 +406,9 @@ export default function App() {
         </div>
         {view === 'dashboard' && dash && (
           <>
-            <h1>Good morning 👋</h1>
+            <h1>Good morning{me?.name ? `, ${me.name.split(' ')[0]}` : ''} 👋{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}</h1>
             <div className="dept-pills">
-              {depts.map(([k, label]) => (
+              {depts.filter(([k]) => allowed(k)).map(([k, label]) => (
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
               ))}
             </div>
@@ -604,6 +633,186 @@ export default function App() {
                 ))}
               </div>
             ))}
+            {dept === 'hr' && hr && (
+              <>
+                <div className="kpis">
+                  <div className="kpi"><div className="label">Headcount</div><div className="value">{hr.stats.headcount}</div></div>
+                  <div className="kpi"><div className="label">Monthly payroll</div><div className="value">{fmt(hr.stats.monthly_payroll)}</div></div>
+                  <div className="kpi"><div className="label">Pension (monthly)</div><div className="value">{fmt(hr.stats.monthly_pension)}</div></div>
+                  <div className="kpi"><div className="label">Pending advances</div><div className="value">{fmt(hr.stats.pending_advances)}</div><div className="sub">{hr.stats.pending_advance_count} requests</div></div>
+                </div>
+                <div className="card">
+                  <div className="inv-head">
+                    <div className="dept-pills" style={{ marginBottom: 0 }}>
+                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`]].map(([k, label]) => (
+                        <button key={k} className={`pill ${hrTab === k ? 'active' : ''}`} onClick={() => setHrTab(k)}>{label}</button>
+                      ))}
+                    </div>
+                    {hrTab === 'staff' && <button className="btn-primary sm" onClick={() => setHrForm({ id: null, name: '', email: '', phone: '', department: 'sales', role: '', salary: 0, bank: '', pension_rate: 8, hmo_plan: '', onboarding: 'invited', next_of_kin: '', password: '' })}>+ Add staff</button>}
+                    {hrTab === 'advances' && <button className="btn-primary sm" onClick={() => setAdvForm({ staff_id: '', amount: '', reason: '' })}>+ New advance</button>}
+                    {hrTab === 'leaves' && <button className="btn-primary sm" onClick={() => setLeaveForm({ staff_id: '', type: 'annual', start_date: '', end_date: '' })}>+ New leave</button>}
+                  </div>
+
+                  {hrForm && (
+                    <div className="hr-form">
+                      <h3 style={{ marginTop: 8 }}>{hrForm.id ? '✏️ Edit staff' : '➕ Add staff'}</h3>
+                      <div className="inv-item-row">
+                        <input placeholder="Full name" value={hrForm.name} onChange={(e) => setHrForm({ ...hrForm, name: e.target.value })} />
+                        <input placeholder="Email" value={hrForm.email} onChange={(e) => setHrForm({ ...hrForm, email: e.target.value })} />
+                      </div>
+                      <div className="inv-item-row">
+                        <input placeholder="Phone" value={hrForm.phone} onChange={(e) => setHrForm({ ...hrForm, phone: e.target.value })} />
+                        <select value={hrForm.department} onChange={(e) => setHrForm({ ...hrForm, department: e.target.value })}>
+                          <option value="sales">Sales</option>
+                          <option value="support">Support</option>
+                          <option value="inventory">Inventory</option>
+                          <option value="hr">HR</option>
+                          <option value="account">Account</option>
+                        </select>
+                      </div>
+                      <div className="inv-item-row">
+                        <input placeholder="Role" value={hrForm.role} onChange={(e) => setHrForm({ ...hrForm, role: e.target.value })} />
+                        <input type="number" placeholder="Salary ₦/month" value={hrForm.salary} onChange={(e) => setHrForm({ ...hrForm, salary: e.target.value })} />
+                      </div>
+                      <div className="inv-item-row">
+                        <input placeholder="Bank" value={hrForm.bank} onChange={(e) => setHrForm({ ...hrForm, bank: e.target.value })} />
+                        <input type="number" placeholder="Pension %" value={hrForm.pension_rate} onChange={(e) => setHrForm({ ...hrForm, pension_rate: e.target.value })} />
+                      </div>
+                      <div className="inv-item-row">
+                        <input placeholder="HMO plan" value={hrForm.hmo_plan} onChange={(e) => setHrForm({ ...hrForm, hmo_plan: e.target.value })} />
+                        <select value={hrForm.onboarding} onChange={(e) => setHrForm({ ...hrForm, onboarding: e.target.value })}>
+                          <option value="invited">Invited</option>
+                          <option value="documents">Documents</option>
+                          <option value="orientation">Orientation</option>
+                          <option value="active">Active</option>
+                        </select>
+                      </div>
+                      <div className="inv-item-row">
+                        <input placeholder="Next of kin" value={hrForm.next_of_kin} onChange={(e) => setHrForm({ ...hrForm, next_of_kin: e.target.value })} />
+                        <input placeholder="Login password (optional)" value={hrForm.password} onChange={(e) => setHrForm({ ...hrForm, password: e.target.value })} />
+                      </div>
+                      <div className="quick-actions">
+                        <button className="btn-primary" onClick={async () => {
+                          const { id, ...fields } = hrForm;
+                          const body = JSON.stringify({ ...fields, password: fields.password || undefined });
+                          if (id) await api(`/staff/${id}`, { method: 'PUT', body });
+                          else await api('/staff', { method: 'POST', body });
+                          setHr(await api('/hr-dashboard'));
+                          setHrForm(null);
+                        }}>{hrForm.id ? 'Save changes' : 'Add staff'}</button>
+                        <button className="btn-ghost" onClick={() => setHrForm(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {advForm && (
+                    <div className="hr-form">
+                      <h3 style={{ marginTop: 8 }}>➕ Salary advance</h3>
+                      <select value={advForm.staff_id} onChange={(e) => setAdvForm({ ...advForm, staff_id: e.target.value })}>
+                        <option value="">Select staff…</option>
+                        {hr.staff.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.role}</option>)}
+                      </select>
+                      <div className="inv-item-row">
+                        <input type="number" placeholder="Amount ₦" value={advForm.amount} onChange={(e) => setAdvForm({ ...advForm, amount: e.target.value })} />
+                        <input placeholder="Reason" value={advForm.reason} onChange={(e) => setAdvForm({ ...advForm, reason: e.target.value })} />
+                      </div>
+                      <div className="quick-actions">
+                        <button className="btn-primary" onClick={async () => {
+                          await api('/salary-advances', { method: 'POST', body: JSON.stringify(advForm) });
+                          setHr(await api('/hr-dashboard'));
+                          setAdvForm(null);
+                        }}>Request advance</button>
+                        <button className="btn-ghost" onClick={() => setAdvForm(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {leaveForm && (
+                    <div className="hr-form">
+                      <h3 style={{ marginTop: 8 }}>➕ Leave request</h3>
+                      <select value={leaveForm.staff_id} onChange={(e) => setLeaveForm({ ...leaveForm, staff_id: e.target.value })}>
+                        <option value="">Select staff…</option>
+                        {hr.staff.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.role}</option>)}
+                      </select>
+                      <div className="inv-item-row">
+                        <select value={leaveForm.type} onChange={(e) => setLeaveForm({ ...leaveForm, type: e.target.value })}>
+                          <option value="annual">Annual</option>
+                          <option value="sick">Sick</option>
+                          <option value="maternity">Maternity</option>
+                          <option value="paternity">Paternity</option>
+                          <option value="unpaid">Unpaid</option>
+                        </select>
+                      </div>
+                      <div className="inv-item-row">
+                        <input type="date" value={leaveForm.start_date} onChange={(e) => setLeaveForm({ ...leaveForm, start_date: e.target.value })} />
+                        <input type="date" value={leaveForm.end_date} onChange={(e) => setLeaveForm({ ...leaveForm, end_date: e.target.value })} />
+                      </div>
+                      <div className="quick-actions">
+                        <button className="btn-primary" onClick={async () => {
+                          await api('/leaves', { method: 'POST', body: JSON.stringify(leaveForm) });
+                          setHr(await api('/hr-dashboard'));
+                          setLeaveForm(null);
+                        }}>Request leave</button>
+                        <button className="btn-ghost" onClick={() => setLeaveForm(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {hrTab === 'staff' && hr.staff.map((s) => (
+                    <div key={s.id} className="inv-row">
+                      <div className={`thread-ava ava-c${s.id % 5}`}>{(s.name || '?')[0]}</div>
+                      <div className="thread-info">
+                        <b>{s.name} · {s.role}</b>
+                        <span>{s.email} · {s.phone}</span>
+                      </div>
+                      <div className="inv-right">
+                        <span className="chip closed">{s.department}</span>
+                        <span className="chip draft">{s.onboarding}</span>
+                        <div className="inv-amt">{fmt(s.salary)}/mo</div>
+                        <button className="btn-ghost sm" onClick={() => setHrForm({ id: s.id, name: s.name, email: s.email || '', phone: s.phone || '', department: s.department, role: s.role, salary: s.salary, bank: s.bank || '', pension_rate: s.pension_rate, hmo_plan: s.hmo_plan || '', onboarding: s.onboarding, next_of_kin: s.next_of_kin || '', password: '' })}>✏️</button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {hrTab === 'advances' && hr.advances.map((a) => (
+                    <div key={a.id} className="inv-row">
+                      <div className="thread-ava">💸</div>
+                      <div className="thread-info">
+                        <b>{a.name}</b>
+                        <span>{a.reason} · {a.requested_at}</span>
+                      </div>
+                      <div className="inv-right">
+                        <div className="inv-amt">{fmt(a.amount)}</div>
+                        <span className={`chip ${a.status === 'pending' ? 'open' : a.status === 'approved' ? 'pending' : 'closed'}`}>{a.status}</span>
+                        {a.status === 'pending' && <button className="btn-primary sm" onClick={async () => { await api(`/salary-advances/${a.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setHr(await api('/hr-dashboard')); }}>Approve</button>}
+                        {a.status === 'approved' && <button className="btn-ghost sm" onClick={async () => { await api(`/salary-advances/${a.id}`, { method: 'PUT', body: JSON.stringify({ status: 'repaid' }) }); setHr(await api('/hr-dashboard')); }}>Mark repaid</button>}
+                      </div>
+                    </div>
+                  ))}
+
+                  {hrTab === 'leaves' && hr.leaves.map((l) => (
+                    <div key={l.id} className="inv-row">
+                      <div className="thread-ava">🏖</div>
+                      <div className="thread-info">
+                        <b>{l.name} — {l.type} leave</b>
+                        <span>{l.start_date} → {l.end_date}</span>
+                      </div>
+                      <div className="inv-right">
+                        <span className={`chip ${l.status === 'pending' ? 'open' : l.status === 'approved' ? 'closed' : 'low'}`}>{l.status}</span>
+                        {l.status === 'pending' && (
+                          <div className="quick-actions">
+                            <button className="btn-primary sm" onClick={async () => { await api(`/leaves/${l.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setHr(await api('/hr-dashboard')); }}>✓</button>
+                            <button className="btn-ghost sm" onClick={async () => { await api(`/leaves/${l.id}`, { method: 'PUT', body: JSON.stringify({ status: 'rejected' }) }); setHr(await api('/hr-dashboard')); }}>✕</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {hr.staff.length === 0 && <p className="muted">No staff yet — add your first team member.</p>}
+                </div>
+              </>
+            )}
+
             {dept === 'account' && account && (
               <div className="card">
                 <h3>👤 Account</h3>
@@ -627,6 +836,49 @@ export default function App() {
                 </div>
                 <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
                 <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
+                <h3 style={{ marginTop: 14 }}>⚙️ Feature access (who sees what)</h3>
+                <p className="muted">Switch off any section and it disappears from every staff member's app instantly.</p>
+                {[['customers', '👥 Customers'], ['inbox', '💬 WhatsApp Inbox'], ['invoices', '🧾 Invoicing'], ['followups', '📞 Follow-ups'], ['feedback', '📝 Feedback'], ['reports', '📊 Reports'], ['ads', '📣 Ads Studio'], ['hr', '🧑💼 HR'], ['pipeline', '🔁 Pipeline']].map(([k, label]) => (
+                  <div key={k} className="inv-line">
+                    <span>{label}</span>
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={orgFeats ? orgFeats[k] !== false : true}
+                        onChange={async (e) => {
+                          const next = { ...(orgFeats || {}), [k]: e.target.checked };
+                          setOrgFeats(next);
+                          await api('/org/features', { method: 'PUT', body: JSON.stringify({ features: next }) });
+                        }}
+                      />
+                      <span className="slider" />
+                    </label>
+                  </div>
+                ))}
+                {hr && (
+                  <>
+                    <h3 style={{ marginTop: 14 }}>👥 Staff & departments</h3>
+                    <p className="muted">Assign staff to a department — they only see what that department can access.</p>
+                    {hr.staff.map((s) => (
+                      <div key={s.id} className="inv-line">
+                        <span>{s.name}</span>
+                        <select
+                          value={s.department}
+                          onChange={async (e) => {
+                            await api(`/staff/${s.id}`, { method: 'PUT', body: JSON.stringify({ department: e.target.value }) });
+                            setHr(await api('/hr-dashboard'));
+                          }}
+                        >
+                          <option value="sales">Sales</option>
+                          <option value="support">Support</option>
+                          <option value="inventory">Inventory</option>
+                          <option value="hr">HR</option>
+                          <option value="account">Account</option>
+                        </select>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </>
@@ -1027,7 +1279,7 @@ export default function App() {
       </main>
 
       <nav className="bottomnav">
-        {nav.map(([k, icon, label]) => (
+        {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`bn-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span>{icon}</span>{label}
           </div>
