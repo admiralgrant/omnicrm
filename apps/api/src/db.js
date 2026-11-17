@@ -190,6 +190,29 @@ CREATE TABLE IF NOT EXISTS attendance (
   note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_attendance_user ON attendance(user_id, date);
+
+CREATE TABLE IF NOT EXISTS remittances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  period TEXT NOT NULL,                 -- YYYY-MM of the payroll run
+  type TEXT NOT NULL,                   -- paye | pension
+  amount REAL NOT NULL,
+  due_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | paid
+  run_id INTEGER REFERENCES payroll_runs(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_remit_user ON remittances(user_id);
+
+CREATE TABLE IF NOT EXISTS shifts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  staff_id INTEGER NOT NULL REFERENCES staff(id),
+  date TEXT NOT NULL,                   -- YYYY-MM-DD
+  shift TEXT NOT NULL DEFAULT 'morning', -- morning | afternoon | night | off
+  UNIQUE(staff_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_shifts_user ON shifts(user_id, date);
 CREATE TABLE IF NOT EXISTS invoices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
