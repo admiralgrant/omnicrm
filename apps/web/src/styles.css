@@ -128,6 +128,9 @@ input { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; 
 .pricing-note { text-align: center; margin-top: 22px; }
 .landing-footer { border-top: 1px solid var(--line); padding: 30px 5%; display: flex; flex-direction: column; align-items: center; gap: 8px; background: #fff; }
 .back { margin-bottom: 10px; }
+.pw-wrap { position: relative; }
+.pw-wrap input { width: 100%; padding-right: 42px; }
+.pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: 0; cursor: pointer; font-size: 17px; padding: 6px; line-height: 1; }
 .inv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .inv-amt { font-weight: 800; font-size: 13.5px; flex-shrink: 0; }
 .inv-label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin: 12px 0 5px; }
