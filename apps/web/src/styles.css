@@ -128,8 +128,10 @@ input { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; 
 .pricing-note { text-align: center; margin-top: 22px; }
 .landing-footer { border-top: 1px solid var(--line); padding: 30px 5%; display: flex; flex-direction: column; align-items: center; gap: 8px; background: #fff; }
 .back { margin-bottom: 10px; }
+.mobile-topbar { display: none; }
 @media (max-width: 760px) {
   .sidebar { display: none; }
+  .mobile-topbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 14px; }
   .main { padding: 18px 18px 84px; }
   .bottomnav {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0;
