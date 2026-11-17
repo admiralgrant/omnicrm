@@ -234,6 +234,30 @@ app.get('/products', { preHandler: requireAuth }, async (req) => {
   return { products, stock_value, low_count, total: products.length };
 });
 
+app.post('/products', { preHandler: requireAuth }, async (req, reply) => {
+  const { name, sku, category, stock, low_stock_at, unit_cost, unit_price } = req.body || {};
+  if (!name) return reply.code(400).send({ error: 'Product name is required' });
+  const info = db.prepare('INSERT INTO products (user_id, name, sku, category, stock, low_stock_at, unit_cost, unit_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, name, sku || null, category || 'General', Number(stock) || 0, Number(low_stock_at) || 5, Number(unit_cost) || 0, Number(unit_price) || 0);
+  return { product: db.prepare('SELECT * FROM products WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.put('/products/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM products WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Product not found' });
+  const { name, sku, category, stock, low_stock_at, unit_cost, unit_price } = req.body || {};
+  db.prepare('UPDATE products SET name = ?, sku = ?, category = ?, stock = ?, low_stock_at = ?, unit_cost = ?, unit_price = ? WHERE id = ? AND user_id = ?')
+    .run(name ?? existing.name, sku ?? existing.sku, category ?? existing.category, Number(stock ?? existing.stock), Number(low_stock_at ?? existing.low_stock_at), Number(unit_cost ?? existing.unit_cost), Number(unit_price ?? existing.unit_price), req.params.id, req.user.id);
+  return { product: db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id) };
+});
+
+app.delete('/products/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT id FROM products WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Product not found' });
+  db.prepare('DELETE FROM products WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  return { ok: true };
+});
+
 app.get('/tickets', { preHandler: requireAuth }, async (req) => {
   const rows = db.prepare(`
     SELECT t.*, c.company, c.name FROM tickets t
