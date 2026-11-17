@@ -972,9 +972,93 @@ app.put('/payroll/runs/:id', { preHandler: [requireAuth, gate('hr')] }, async (r
   const { status } = req.body || {};
   if (!['draft', 'approved', 'paid'].includes(status)) return reply.code(400).send({ error: 'status must be draft, approved or paid' });
   db.prepare('UPDATE payroll_runs SET status = ? WHERE id = ?').run(status, run.id);
-  if (status === 'paid') db.prepare('UPDATE payslips SET status = ? WHERE run_id = ?').run('paid', run.id);
+  if (status === 'paid') {
+    db.prepare('UPDATE payslips SET status = ? WHERE run_id = ?').run('paid', run.id);
+    // create statutory obligations: PAYE due 10th of next month; pension (staff 8% + employer 10%) due ~7 days after salary payment
+    const [y, m] = run.period.split('-').map(Number);
+    const nextMonth = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+    const payeDue = `${nextMonth}-10`;
+    const pensionDue = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+    const employerPension = Math.round(run.total_gross * 0.10);
+    const insert = db.prepare('INSERT INTO remittances (user_id, period, type, amount, due_date, run_id) VALUES (?, ?, ?, ?, ?, ?)');
+    insert.run(req.user.id, run.period, 'paye', run.total_paye, payeDue, run.id);
+    insert.run(req.user.id, run.period, 'pension', run.total_pension + employerPension, pensionDue, run.id);
+  }
   return { run: db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(run.id) };
 });
+
+// ---- statutory remittance schedule ----
+app.get('/remittances', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare('SELECT * FROM remittances WHERE user_id = ? ORDER BY due_date ASC').all(req.user.id);
+  const pending = rows.filter((r) => r.status === 'pending');
+  return {
+    remittances: rows,
+    next_due: pending[0] || null,
+    pending_total: pending.reduce((s, r) => s + r.amount, 0),
+    pending_count: pending.length,
+  };
+});
+
+app.put('/remittances/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM remittances WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Remittance not found' });
+  const { status } = req.body || {};
+  if (!['pending', 'paid'].includes(status)) return reply.code(400).send({ error: 'status must be pending or paid' });
+  db.prepare('UPDATE remittances SET status = ? WHERE id = ?').run(status, req.params.id);
+  return { remittance: db.prepare('SELECT * FROM remittances WHERE id = ?').get(req.params.id) };
+});
+
+// ---- accountant journal export (CSV) ----
+app.get('/payroll/runs/:id/journal.csv', { preHandler: requireAuth }, async (req, reply) => {
+  const run = db.prepare('SELECT * FROM payroll_runs WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!run) return reply.code(404).send({ error: 'Run not found' });
+  const slips = db.prepare('SELECT p.*, s.name FROM payslips p JOIN staff s ON s.id = p.staff_id WHERE p.run_id = ?').all(run.id);
+  const employerPension = Math.round(run.total_gross * 0.10);
+  const lines = [];
+  lines.push(['Payroll Journal', run.period, `Run #${run.id}`, run.status].join(','));
+  lines.push('');
+  lines.push('Staff,Gross,Staff Pension (8%),PAYE,Net Pay');
+  for (const s of slips) lines.push([s.name, s.gross, s.pension, s.paye, s.net].join(','));
+  lines.push('');
+  lines.push(`TOTALS,${run.total_gross},${run.total_pension},${run.total_paye},${run.total_net}`);
+  lines.push(`Employer pension (10%),${employerPension},,,`);
+  lines.push('');
+  lines.push('Journal Entries');
+  lines.push(`Dr Salaries expense,${run.total_gross},,`);
+  lines.push(`Cr PAYE payable,,${run.total_paye},`);
+  lines.push(`Cr Pension payable,,${run.total_pension + employerPension},`);
+  lines.push(`Cr Bank / Net pay,,,${run.total_net}`);
+  reply.header('Content-Type', 'text/csv');
+  reply.header('Content-Disposition', `attachment; filename="payroll-journal-${run.period}.csv"`);
+  return lines.join('\n');
+});
+
+// ---- shift roster ----
+app.get('/shifts', { preHandler: requireAuth }, async (req) => {
+  const start = req.query?.start || new Date().toISOString().slice(0, 10);
+  const end = req.query?.end || new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10);
+  const rows = db.prepare('SELECT sh.*, s.name, s.department FROM shifts sh JOIN staff s ON s.id = sh.staff_id WHERE sh.user_id = ? AND sh.date BETWEEN ? AND ? ORDER BY sh.date, s.name').all(req.user.id, start, end);
+  return { start, end, shifts: rows };
+});
+
+app.put('/shifts', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const { staff_id, date, shift } = req.body || {};
+  if (!staff_id || !date || !shift) return reply.code(400).send({ error: 'staff_id, date and shift are required' });
+  if (!['morning', 'afternoon', 'night', 'off'].includes(shift)) return reply.code(400).send({ error: 'shift must be morning, afternoon, night or off' });
+  db.prepare('INSERT INTO shifts (user_id, staff_id, date, shift) VALUES (?, ?, ?, ?) ON CONFLICT(staff_id, date) DO UPDATE SET shift = excluded.shift')
+    .run(req.user.id, staff_id, date, shift);
+  return { ok: true };
+});
+
+app.get('/me/shifts', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.staff_id) return reply.code(403).send({ error: 'Staff only' });
+  const start = new Date().toISOString().slice(0, 10);
+  const end = new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10);
+  const rows = db.prepare('SELECT * FROM shifts WHERE staff_id = ? AND date BETWEEN ? AND ? ORDER BY date').all(req.user.staff_id, start, end);
+  return { shifts: rows };
+});
+
+// ---- health ----
 
 app.get('/payslips/:id/pdf', { preHandler: requireAuth }, async (req, reply) => {
   const slip = db.prepare('SELECT p.*, s.name, s.role, s.department, s.bank, r.period FROM payslips p JOIN staff s ON s.id = p.staff_id JOIN payroll_runs r ON r.id = p.run_id WHERE p.id = ?').get(req.params.id);
