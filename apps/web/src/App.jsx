@@ -14,6 +14,13 @@ async function api(path, options = {}) {
   return data;
 }
 
+const jwtPayload = () => {
+  const t = localStorage.getItem(tokenKey);
+  if (!t) return null;
+  try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+};
+const meJwt = () => !!jwtPayload()?.staff_id;
+
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
   const [authMode, setAuthMode] = useState('landing'); // landing | login | register
@@ -68,6 +75,10 @@ export default function App() {
   const [hrForm, setHrForm] = useState(null); // add/edit staff
   const [advForm, setAdvForm] = useState(null);
   const [leaveForm, setLeaveForm] = useState(null);
+  const [payrollRuns, setPayrollRuns] = useState([]);
+  const [activeRun, setActiveRun] = useState(null);
+  const [attendance, setAttendance] = useState([]);
+  const [portal, setPortal] = useState(null);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [loading, setLoading] = useState(true);
 
@@ -88,6 +99,9 @@ export default function App() {
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
         try { setOrgFeats((await api('/org/features')).features); } catch { /* staff-safe */ }
         try { setHr(await api('/hr-dashboard')); } catch { /* non-HR staff */ }
+        try { setPayrollRuns((await api('/payroll/runs')).runs); } catch { /* non-HR */ }
+        try { setAttendance((await api('/attendance')).attendance); } catch { /* non-HR */ }
+        if (meJwt()) { try { setPortal(await api('/me/portal')); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -128,6 +142,7 @@ export default function App() {
     account: ['dashboard', 'invoices', 'reports'],
   };
   const allowed = (section) => {
+    if (section === 'portal') return !!(me?.staff_id || me?.staff);
     if (orgFeats && orgFeats[section] === false) return false;
     if (!me || !me.dept) return true;
     return (FRONT_ACCESS[me.dept] || []).includes(section);
@@ -375,6 +390,7 @@ export default function App() {
     ['followups', '📞', 'Follow-ups'],
     ['feedback', '📝', 'Feedback'],
     ['reports', '📊', 'Reports'],
+    ['portal', '👤', 'My Portal'],
     ['ads', '📣', 'Ads Studio'],
   ];
 
@@ -644,13 +660,18 @@ export default function App() {
                 <div className="card">
                   <div className="inv-head">
                     <div className="dept-pills" style={{ marginBottom: 0 }}>
-                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`]].map(([k, label]) => (
+                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`], ['payroll', 'Payroll'], ['attendance', 'Attendance']].map(([k, label]) => (
                         <button key={k} className={`pill ${hrTab === k ? 'active' : ''}`} onClick={() => setHrTab(k)}>{label}</button>
                       ))}
                     </div>
                     {hrTab === 'staff' && <button className="btn-primary sm" onClick={() => setHrForm({ id: null, name: '', email: '', phone: '', department: 'sales', role: '', salary: 0, bank: '', pension_rate: 8, hmo_plan: '', onboarding: 'invited', next_of_kin: '', password: '' })}>+ Add staff</button>}
                     {hrTab === 'advances' && <button className="btn-primary sm" onClick={() => setAdvForm({ staff_id: '', amount: '', reason: '' })}>+ New advance</button>}
                     {hrTab === 'leaves' && <button className="btn-primary sm" onClick={() => setLeaveForm({ staff_id: '', type: 'annual', start_date: '', end_date: '' })}>+ New leave</button>}
+                    {hrTab === 'payroll' && <button className="btn-primary sm" onClick={async () => {
+                      const period = new Date().toISOString().slice(0, 7);
+                      await api('/payroll/runs', { method: 'POST', body: JSON.stringify({ period }) });
+                      setPayrollRuns((await api('/payroll/runs')).runs);
+                    }}>Run payroll (this month)</button>}
                   </div>
 
                   {hrForm && (
@@ -808,6 +829,95 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+
+                  {hrTab === 'payroll' && (
+                    <>
+                      {activeRun ? (
+                        <>
+                          <div className="convo-head" style={{ marginTop: 10 }}>
+                            <button className="btn-ghost" onClick={() => setActiveRun(null)}>←</button>
+                            <div><b>{activeRun.run.period} payroll</b><span className="muted">{activeRun.run.status}</span></div>
+                            <span className={`chip ${activeRun.run.status === 'paid' ? 'closed' : activeRun.run.status === 'approved' ? 'pending' : 'draft'}`}>{activeRun.run.status}</span>
+                          </div>
+                          <div className="kpis">
+                            <div className="kpi"><div className="label">Gross</div><div className="value">{fmt(activeRun.run.total_gross)}</div></div>
+                            <div className="kpi"><div className="label">Pension</div><div className="value">{fmt(activeRun.run.total_pension)}</div></div>
+                            <div className="kpi"><div className="label">PAYE</div><div className="value">{fmt(activeRun.run.total_paye)}</div></div>
+                            <div className="kpi"><div className="label">Net</div><div className="value">{fmt(activeRun.run.total_net)}</div></div>
+                          </div>
+                          {activeRun.payslips.map((p) => (
+                            <div key={p.id} className="inv-row">
+                              <div className="thread-ava">🧾</div>
+                              <div className="thread-info">
+                                <b>{p.name} · {p.role}</b>
+                                <span>{p.department} · net {fmt(p.net)}</span>
+                              </div>
+                              <div className="inv-right">
+                                <span className="muted" style={{ fontSize: 11 }}>gross {fmt(p.gross)}</span>
+                                <span className="muted" style={{ fontSize: 11 }}>pension −{fmt(p.pension)} · PAYE −{fmt(p.paye)}</span>
+                                <button className="btn-ghost sm" onClick={async () => {
+                                  const res = await fetch(`${API}/payslips/${p.id}/pdf`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } });
+                                  const blob = await res.blob();
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url; a.download = `Payslip-${p.name}.pdf`;
+                                  document.body.appendChild(a); a.click(); a.remove();
+                                  URL.revokeObjectURL(url);
+                                }}>⬇ PDF</button>
+                              </div>
+                            </div>
+                          ))}
+                          <div className="quick-actions">
+                            {activeRun.run.status === 'draft' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); }}>Approve payroll</button>}
+                            {activeRun.run.status === 'approved' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); }}>Mark as paid ✓</button>}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {payrollRuns.length === 0 && <p className="muted">No payroll runs yet — run this month's payroll to generate payslips.</p>}
+                          {payrollRuns.map((r) => (
+                            <div key={r.id} className="inv-row" onClick={async () => setActiveRun(await api(`/payroll/runs/${r.id}`))}>
+                              <div className="thread-ava">💰</div>
+                              <div className="thread-info">
+                                <b>{r.period} payroll run</b>
+                                <span>net {fmt(r.total_net)} · created {r.created_at.slice(0, 10)}</span>
+                              </div>
+                              <div className="inv-right">
+                                <span className={`chip ${r.status === 'paid' ? 'closed' : r.status === 'approved' ? 'pending' : 'draft'}`}>{r.status}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {hrTab === 'attendance' && (
+                    <>
+                      <p className="muted">Today's attendance — staff clock in from their portal or you can do it for them.</p>
+                      {hr.staff.map((s) => {
+                        const row = attendance.find((a) => a.staff_id === s.id);
+                        return (
+                          <div key={s.id} className="inv-row">
+                            <div className={`thread-ava ava-c${s.id % 5}`}>{(s.name || '?')[0]}</div>
+                            <div className="thread-info">
+                              <b>{s.name}</b>
+                              <span>{row?.clock_in ? `In: ${row.clock_in}${row?.clock_out ? ` · Out: ${row.clock_out}` : ''}` : 'Not clocked in'}</span>
+                            </div>
+                            <div className="inv-right">
+                              {!row?.clock_in ? (
+                                <button className="btn-primary sm" onClick={async () => { await api('/attendance/clock-in', { method: 'POST', body: JSON.stringify({ staff_id: s.id }) }); setAttendance((await api('/attendance')).attendance); }}>Clock in</button>
+                              ) : !row.clock_out ? (
+                                <button className="btn-ghost sm" onClick={async () => { await api('/attendance/clock-out', { method: 'POST', body: JSON.stringify({ staff_id: s.id }) }); setAttendance((await api('/attendance')).attendance); }}>Clock out</button>
+                              ) : (
+                                <span className="chip closed">done</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
                   {hr.staff.length === 0 && <p className="muted">No staff yet — add your first team member.</p>}
                 </div>
               </>
@@ -1259,6 +1369,91 @@ export default function App() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {view === 'portal' && portal && (
+          <div className="card">
+            <h3>👤 My Portal — {portal.staff.name}</h3>
+            <div className="inv-line"><span>Role</span><span>{portal.staff.role} · {portal.staff.department}</span></div>
+            <div className="inv-line"><span>Salary</span><span>{fmt(portal.staff.salary)}/mo</span></div>
+            <div className="inv-line"><span>HMO</span><span>{portal.staff.hmo_plan || '—'}</span></div>
+            <div className="inv-line"><span>Bank</span><span>{portal.staff.bank || '—'}</span></div>
+
+            <h3 style={{ marginTop: 14 }}>⏰ Attendance today</h3>
+            {portal.today_attendance[0]?.clock_in ? (
+              <div className="inv-line">
+                <span>Clocked in {portal.today_attendance[0].clock_in}</span>
+                <span>{portal.today_attendance[0].clock_out ? `out ${portal.today_attendance[0].clock_out}` : 'still in'}</span>
+              </div>
+            ) : <p className="muted">Not clocked in yet.</p>}
+            <div className="quick-actions">
+              {!portal.today_attendance[0]?.clock_in ? (
+                <button className="btn-primary" onClick={async () => { await api('/attendance/clock-in', { method: 'POST', body: '{}' }); setPortal(await api('/me/portal')); }}>⏰ Clock in</button>
+              ) : !portal.today_attendance[0].clock_out ? (
+                <button className="btn-primary" onClick={async () => { await api('/attendance/clock-out', { method: 'POST', body: '{}' }); setPortal(await api('/me/portal')); }}>🏁 Clock out</button>
+              ) : null}
+            </div>
+
+            <h3 style={{ marginTop: 14 }}>🧾 My payslips</h3>
+            {portal.payslips.length === 0 && <p className="muted">No payslips yet.</p>}
+            {portal.payslips.map((p) => (
+              <div key={p.id} className="inv-row">
+                <div className="thread-ava">🧾</div>
+                <div className="thread-info">
+                  <b>{p.period} payslip</b>
+                  <span>gross {fmt(p.gross)} · pension −{fmt(p.pension)} · PAYE −{fmt(p.paye)}</span>
+                </div>
+                <div className="inv-right">
+                  <div className="inv-amt">{fmt(p.net)}</div>
+                  <button className="btn-ghost sm" onClick={async () => {
+                    const res = await fetch(`${API}/payslips/${p.id}/pdf`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } });
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = `Payslip-${p.period}.pdf`;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    URL.revokeObjectURL(url);
+                  }}>⬇ PDF</button>
+                </div>
+              </div>
+            ))}
+
+            <h3 style={{ marginTop: 14 }}>💸 My salary advances</h3>
+            {portal.advances.length === 0 && <p className="muted">No advances requested.</p>}
+            {portal.advances.map((a) => (
+              <div key={a.id} className="inv-line">
+                <span>{fmt(a.amount)} — {a.reason}</span>
+                <span className={`chip ${a.status === 'pending' ? 'open' : a.status === 'approved' ? 'pending' : 'closed'}`}>{a.status}</span>
+              </div>
+            ))}
+            <div className="quick-actions">
+              <button className="btn-primary sm" onClick={async () => {
+                const amount = prompt('Advance amount (₦):');
+                if (!amount) return;
+                const reason = prompt('Reason (optional):') || '';
+                await api('/me/advances', { method: 'POST', body: JSON.stringify({ amount: Number(amount), reason }) });
+                setPortal(await api('/me/portal'));
+              }}>Request advance</button>
+            </div>
+
+            <h3 style={{ marginTop: 14 }}>🏖 My leave</h3>
+            {portal.leaves.length === 0 && <p className="muted">No leave requested.</p>}
+            {portal.leaves.map((l) => (
+              <div key={l.id} className="inv-line">
+                <span>{l.type} · {l.start_date} → {l.end_date}</span>
+                <span className={`chip ${l.status === 'pending' ? 'open' : l.status === 'approved' ? 'closed' : 'low'}`}>{l.status}</span>
+              </div>
+            ))}
+            <div className="quick-actions">
+              <button className="btn-primary sm" onClick={async () => {
+                const start = prompt('Start date (YYYY-MM-DD):');
+                const end = prompt('End date (YYYY-MM-DD):');
+                if (!start || !end) return;
+                await api('/me/leaves', { method: 'POST', body: JSON.stringify({ type: 'annual', start_date: start, end_date: end }) });
+                setPortal(await api('/me/portal'));
+              }}>Request leave</button>
+            </div>
           </div>
         )}
 
