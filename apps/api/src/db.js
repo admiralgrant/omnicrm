@@ -125,5 +125,12 @@ if (!invCols.includes('pay_token')) db.exec('ALTER TABLE invoices ADD COLUMN pay
 for (const inv of db.prepare('SELECT id FROM invoices WHERE pay_token IS NULL').all()) {
   db.prepare('UPDATE invoices SET pay_token = ? WHERE id = ?').run(randomUUID(), inv.id);
 }
+// migration: multi-currency support (currency, fx_rate, ngn_total)
+if (!invCols.includes('currency')) db.exec("ALTER TABLE invoices ADD COLUMN currency TEXT NOT NULL DEFAULT 'NGN'");
+if (!invCols.includes('fx_rate')) db.exec('ALTER TABLE invoices ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1');
+if (!invCols.includes('ngn_total')) {
+  db.exec('ALTER TABLE invoices ADD COLUMN ngn_total REAL NOT NULL DEFAULT 0');
+  db.exec('UPDATE invoices SET ngn_total = total WHERE ngn_total = 0');
+}
 
 export default db;
