@@ -1,0 +1,17 @@
+{
+  "name": "@omnicrm/api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "seed": "node src/seed.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^4.28.1",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
