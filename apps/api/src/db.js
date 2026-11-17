@@ -118,4 +118,12 @@ CREATE TABLE IF NOT EXISTS invoice_items (
 CREATE INDEX IF NOT EXISTS idx_invoice_items ON invoice_items(invoice_id);
 `);
 
+// migration: pay_token for public pay links
+import { randomUUID } from 'node:crypto';
+const invCols = db.prepare("PRAGMA table_info(invoices)").all().map((c) => c.name);
+if (!invCols.includes('pay_token')) db.exec('ALTER TABLE invoices ADD COLUMN pay_token TEXT');
+for (const inv of db.prepare('SELECT id FROM invoices WHERE pay_token IS NULL').all()) {
+  db.prepare('UPDATE invoices SET pay_token = ? WHERE id = ?').run(randomUUID(), inv.id);
+}
+
 export default db;
