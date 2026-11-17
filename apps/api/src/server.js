@@ -110,11 +110,11 @@ app.get('/contacts', { preHandler: requireAuth }, async (req) => {
 
 app.post('/contacts', { preHandler: requireAuth }, async (req, reply) => {
   const c = req.body || {};
-  if (!c.name) return reply.code(400).send({ error: 'name is required' });
-  const info = db.prepare(`INSERT INTO contacts (user_id, name, company, phone, email, tags, status, debt_ngn, deal_value_ngn, next_action, next_followup_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(req.user.id, c.name, c.company || null, c.phone || null, c.email || null, c.tags || 'lead', c.status || 'new',
-      c.debt_ngn || 0, c.deal_value_ngn || 0, c.next_action || null, c.next_followup_date || null);
+  if (!c.name && !c.company) return reply.code(400).send({ error: 'name or company is required' });
+  const info = db.prepare(`INSERT INTO contacts (user_id, name, company, phone, email, tags, status, debt_ngn, deal_value_ngn, next_action, next_followup_date, staff_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(req.user.id, c.name || null, c.company || null, c.phone || null, c.email || null, c.tags || 'lead', c.status || 'new',
+      c.debt_ngn || 0, c.deal_value_ngn || 0, c.next_action || null, c.next_followup_date || null, c.staff_id || null);
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(info.lastInsertRowid) };
 });
 
@@ -122,9 +122,9 @@ app.put('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
   const existing = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return reply.code(404).send({ error: 'Contact not found' });
   const c = req.body || {};
-  db.prepare('UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, tags = ?, status = ?, debt_ngn = ?, deal_value_ngn = ? WHERE id = ? AND user_id = ?')
+  db.prepare('UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, tags = ?, status = ?, debt_ngn = ?, deal_value_ngn = ?, staff_id = ? WHERE id = ? AND user_id = ?')
     .run(c.name ?? existing.name, c.company ?? existing.company, c.phone ?? existing.phone, c.email ?? existing.email, c.tags ?? existing.tags, c.status ?? existing.status,
-      Number(c.debt_ngn ?? existing.debt_ngn), Number(c.deal_value_ngn ?? existing.deal_value_ngn), req.params.id, req.user.id);
+      Number(c.debt_ngn ?? existing.debt_ngn), Number(c.deal_value_ngn ?? existing.deal_value_ngn), c.staff_id ?? existing.staff_id, req.params.id, req.user.id);
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id) };
 });
 
@@ -598,7 +598,9 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   const doc = new PDFDocument({ size: 'A4', margin: 48, info: { Title: `Invoice ${inv.number}` } });
   reply.header('Content-Type', 'application/pdf');
   reply.header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
-  doc.pipe(reply.raw);
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
 
   doc.fontSize(22).font('Helvetica-Bold').text('INVOICE', { characterSpacing: 3 });
   doc.moveDown(0.3).fontSize(11).font('Helvetica').fillColor('#444')
@@ -658,6 +660,7 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
     .text('Thank you for your business.', { align: 'center' });
 
   doc.end();
+  return reply.send(await done);
 });
 
 // ---- feedback (conversation/call notes) ----
@@ -873,11 +876,11 @@ app.get('/hr-dashboard', { preHandler: [requireAuth, gate('hr')] }, async (req) 
 });
 
 app.post('/staff', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
-  const { name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, password } = req.body || {};
+  const { name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, password, commission_rate } = req.body || {};
   if (!name) return reply.code(400).send({ error: 'Staff name is required' });
   const password_hash = password ? bcrypt.hashSync(password, 10) : null;
-  const info = db.prepare('INSERT INTO staff (user_id, name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, can_login, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, name, email || null, phone || null, department || 'sales', role || 'Staff', Number(salary) || 0, bank || null, Number(pension_rate ?? 8), hmo_plan || null, onboarding || 'invited', next_of_kin || null, password ? 1 : 0, password_hash);
+  const info = db.prepare('INSERT INTO staff (user_id, name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, can_login, password_hash, commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, name, email || null, phone || null, department || 'sales', role || 'Staff', Number(salary) || 0, bank || null, Number(pension_rate ?? 8), hmo_plan || null, onboarding || 'invited', next_of_kin || null, password ? 1 : 0, password_hash, Number(commission_rate ?? 0));
   return { staff: db.prepare('SELECT * FROM staff WHERE id = ?').get(info.lastInsertRowid) };
 });
 
@@ -885,10 +888,11 @@ app.put('/staff/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, rep
   const existing = db.prepare('SELECT * FROM staff WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return reply.code(404).send({ error: 'Staff not found' });
   const c = req.body || {};
-  db.prepare('UPDATE staff SET name = ?, email = ?, phone = ?, department = ?, role = ?, salary = ?, bank = ?, pension_rate = ?, hmo_plan = ?, onboarding = ?, status = ?, next_of_kin = ? WHERE id = ? AND user_id = ?')
+  db.prepare('UPDATE staff SET name = ?, email = ?, phone = ?, department = ?, role = ?, salary = ?, bank = ?, pension_rate = ?, hmo_plan = ?, onboarding = ?, status = ?, next_of_kin = ?, commission_rate = ? WHERE id = ? AND user_id = ?')
     .run(c.name ?? existing.name, c.email ?? existing.email, c.phone ?? existing.phone, c.department ?? existing.department, c.role ?? existing.role,
       Number(c.salary ?? existing.salary), c.bank ?? existing.bank, Number(c.pension_rate ?? existing.pension_rate), c.hmo_plan ?? existing.hmo_plan,
-      c.onboarding ?? existing.onboarding, c.status ?? existing.status, c.next_of_kin ?? existing.next_of_kin, req.params.id, req.user.id);
+      c.onboarding ?? existing.onboarding, c.status ?? existing.status, c.next_of_kin ?? existing.next_of_kin,
+      Number(c.commission_rate ?? existing.commission_rate), req.params.id, req.user.id);
   return { staff: db.prepare('SELECT * FROM staff WHERE id = ?').get(req.params.id) };
 });
 
@@ -956,20 +960,28 @@ app.post('/payroll/runs', { preHandler: [requireAuth, gate('hr')] }, async (req,
   const existing = db.prepare('SELECT id FROM payroll_runs WHERE user_id = ? AND period = ?').get(req.user.id, period);
   if (existing) return reply.code(400).send({ error: `A payroll run for ${period} already exists.` });
   const staff = db.prepare("SELECT * FROM staff WHERE user_id = ? AND status = 'active'").all(req.user.id);
-  let totalGross = 0, totalPension = 0, totalPaye = 0, totalNet = 0;
+  // commissions: paid invoices in the period attributed to each sales rep's customers
+  const commAgg = db.prepare(`
+    SELECT c.staff_id AS sid, COALESCE(SUM(i.ngn_total), 0) AS value
+    FROM invoices i JOIN contacts c ON c.id = i.contact_id
+    WHERE i.user_id = ? AND i.status = 'paid' AND i.issue_date LIKE ? AND c.staff_id IS NOT NULL
+    GROUP BY c.staff_id`).all(req.user.id, `${period}%`);
+  const commByStaff = Object.fromEntries(commAgg.map((r) => [r.sid, r.value]));
+  let totalGross = 0, totalPension = 0, totalPaye = 0, totalNet = 0, totalComm = 0;
   const info = db.prepare('INSERT INTO payroll_runs (user_id, period) VALUES (?, ?)').run(req.user.id, period);
   const runId = info.lastInsertRowid;
   for (const s of staff) {
     const gross = s.salary;
+    const commission = Math.round((commByStaff[s.id] || 0) * ((s.commission_rate || 0) / 100));
     const pension = Math.round(gross * 0.08);
     const paye = payeMonthly(gross);
-    const net = gross - pension - paye;
-    db.prepare('INSERT INTO payslips (user_id, run_id, staff_id, gross, pension, paye, net) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(req.user.id, runId, s.id, gross, pension, paye, net);
-    totalGross += gross; totalPension += pension; totalPaye += paye; totalNet += net;
+    const net = gross + commission - pension - paye;
+    db.prepare('INSERT INTO payslips (user_id, run_id, staff_id, gross, commission, pension, paye, net) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(req.user.id, runId, s.id, gross, commission, pension, paye, net);
+    totalGross += gross; totalPension += pension; totalPaye += paye; totalNet += net; totalComm += commission;
   }
-  db.prepare('UPDATE payroll_runs SET total_gross = ?, total_pension = ?, total_paye = ?, total_net = ? WHERE id = ?')
-    .run(totalGross, totalPension, totalPaye, totalNet, runId);
+  db.prepare('UPDATE payroll_runs SET total_gross = ?, total_pension = ?, total_paye = ?, total_net = ?, total_commission = ? WHERE id = ?')
+    .run(totalGross, totalPension, totalPaye, totalNet, totalComm, runId);
   return { run: db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(runId), payslips: staff.length };
 });
 
@@ -1086,7 +1098,9 @@ app.get('/payslips/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   const doc = new PDFDocument({ size: 'A4', margin: 48 });
   reply.header('Content-Type', 'application/pdf');
   reply.header('Content-Disposition', `attachment; filename="Payslip-${slip.period}-${slip.name.replace(/\s+/g, '-')}.pdf"`);
-  doc.pipe(reply.raw);
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
   doc.fontSize(20).font('Helvetica-Bold').text('PAYSLIP', { characterSpacing: 2 });
   doc.moveDown(0.3).fontSize(10).font('Helvetica').fillColor('#444').text(`Period: ${slip.period}`, { align: 'right' });
   doc.moveDown(0.6);
@@ -1095,6 +1109,7 @@ app.get('/payslips/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   doc.moveDown(1);
   const rows = [
     ['Gross salary', slip.gross, false],
+    ['Commission', slip.commission || 0, false],
     ['Pension (8% staff)', slip.pension, true],
     ['PAYE tax', slip.paye, true],
     ['Other deductions', slip.other_deductions, true],
@@ -1109,6 +1124,7 @@ app.get('/payslips/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   }
   doc.moveDown(2).fontSize(8).fillColor('#888').text('Simplified PAYE — generated by OmniCRM. This is a demo payslip.', { align: 'center' });
   doc.end();
+  return reply.send(await done);
 });
 
 // ---- staff self-service portal ----
@@ -1200,6 +1216,29 @@ app.delete('/demo-links/:id', { preHandler: requireAuth }, async (req, reply) =>
   if (!existing) return reply.code(404).send({ error: 'Link not found' });
   db.prepare("UPDATE demo_links SET active = 0, revoked_at = datetime('now') WHERE id = ?").run(req.params.id);
   return { ok: true, revoked: existing.label || existing.token };
+});
+
+// ---- commissions calculator (HR sees all; sales staff see their own) ----
+app.get('/commissions', { preHandler: requireAuth }, async (req) => {
+  const isHr = !req.user.dept || req.user.dept === 'hr';
+  const staff = db.prepare('SELECT * FROM staff WHERE user_id = ?').all(req.user.id)
+    .filter((s) => isHr || s.id === req.user.staff_id);
+  const period = new Date().toISOString().slice(0, 7);
+  const rows = staff.map((s) => {
+    const allTime = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(i.ngn_total), 0) AS v
+      FROM invoices i JOIN contacts c ON c.id = i.contact_id
+      WHERE i.user_id = ? AND i.status = 'paid' AND c.staff_id = ?`).get(req.user.id, s.id);
+    const thisPeriod = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(i.ngn_total), 0) AS v
+      FROM invoices i JOIN contacts c ON c.id = i.contact_id
+      WHERE i.user_id = ? AND i.status = 'paid' AND c.staff_id = ? AND i.issue_date LIKE ?`).get(req.user.id, s.id, `${period}%`);
+    const rate = s.commission_rate || 0;
+    return {
+      staff_id: s.id, name: s.name, department: s.department, rate,
+      period: { paid_invoices: thisPeriod.n, sales_value: thisPeriod.v, commission: Math.round(thisPeriod.v * rate / 100) },
+      all_time: { paid_invoices: allTime.n, sales_value: allTime.v, commission: Math.round(allTime.v * rate / 100) },
+    };
+  });
+  return { period, rows };
 });
 
 // ---- health ----
