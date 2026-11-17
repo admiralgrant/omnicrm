@@ -36,9 +36,9 @@
         el.innerHTML = `
           <div class="mark">O</div>
           <h1>You've been invited to try OmniCRM</h1>
-          <p>${data.label ? `Invitation: ${data.label}. ` : ''}The all-in-one CRM for Nigerian businesses — sales, WhatsApp inbox, invoicing, inventory, HR, payroll and AI reports in one place.</p>
-          <a class="btn" href="/">Enter the demo →</a>
-          <p class="hint">Demo account: grant@besconpaints.com / omnicrm-demo</p>`;
+          <p>Taking you in…</p>
+          <p class="hint">Guest demo login: guest@omnicrm.ng / guest-demo (read-only)</p>`;
+        setTimeout(() => { window.location.href = '/?demo=' + encodeURIComponent(token); }, 900);
       } catch {
         el.innerHTML = '<div class="mark">O</div><h1>This invitation has expired</h1><p>The person who shared this link has ended access to this demo. If you believe this is a mistake, ask them for a new link.</p>';
       }
