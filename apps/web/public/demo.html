@@ -33,7 +33,7 @@
         const res = await fetch('/api/demo/' + encodeURIComponent(token));
         if (!res.ok) throw new Error();
         sessionStorage.setItem('omnicrm_demo', JSON.stringify({ token, at: Date.now() }));
-        window.location.replace('/?demo=' + encodeURIComponent(token));
+        window.location.replace('/?demo=' + encodeURIComponent(token) + '&v=2');
       } catch {
         el.innerHTML = '<div class="mark">O</div><h1>This invitation has expired</h1><p>The person who shared this link has ended access to this demo. If you believe this is a mistake, ask them for a new link.</p>';
       }
