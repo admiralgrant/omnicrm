@@ -132,5 +132,8 @@ if (!invCols.includes('ngn_total')) {
   db.exec('ALTER TABLE invoices ADD COLUMN ngn_total REAL NOT NULL DEFAULT 0');
   db.exec('UPDATE invoices SET ngn_total = total WHERE ngn_total = 0');
 }
+// migration: conversion processing fee (revenue stream)
+if (!invCols.includes('fee_rate')) db.exec('ALTER TABLE invoices ADD COLUMN fee_rate REAL NOT NULL DEFAULT 0');
+if (!invCols.includes('fee')) db.exec('ALTER TABLE invoices ADD COLUMN fee REAL NOT NULL DEFAULT 0');
 
 export default db;
