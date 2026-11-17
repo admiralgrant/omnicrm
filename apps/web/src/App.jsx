@@ -83,6 +83,7 @@ export default function App() {
   const [shifts, setShifts] = useState([]);
   const [portalShifts, setPortalShifts] = useState([]);
   const [demoLinks, setDemoLinks] = useState([]);
+  const [commissions, setCommissions] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -109,6 +110,7 @@ export default function App() {
         try { setRemit(await api('/remittances')); } catch { /* non-HR */ }
         try { setShifts((await api('/shifts')).shifts); } catch { /* non-HR */ }
         try { setDemoLinks((await api('/demo-links')).links); } catch { /* owner-only */ }
+        try { setCommissions((await api('/commissions')).rows); } catch { /* n/a */ }
         if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
@@ -288,11 +290,11 @@ export default function App() {
     setContacts(c.contacts);
   };
   const openNewCustomer = () => {
-    setCustForm({ id: null, name: '', company: '', phone: '', email: '', tags: 'lead', status: 'lead', deal_value_ngn: 0, debt_ngn: 0 });
+    setCustForm({ id: null, name: '', company: '', phone: '', email: '', tags: 'lead', status: 'lead', deal_value_ngn: 0, debt_ngn: 0, staff_id: null });
     setCustView('form');
   };
   const openEditCustomer = (c) => {
-    setCustForm({ id: c.id, name: c.name, company: c.company || '', phone: c.phone || '', email: c.email || '', tags: c.tags || '', status: c.status || 'lead', deal_value_ngn: c.deal_value_ngn || 0, debt_ngn: c.debt_ngn || 0 });
+    setCustForm({ id: c.id, name: c.name, company: c.company || '', phone: c.phone || '', email: c.email || '', tags: c.tags || '', status: c.status || 'lead', deal_value_ngn: c.deal_value_ngn || 0, debt_ngn: c.debt_ngn || 0, staff_id: c.staff_id || null });
     setCustView('form');
   };
   const saveCustomer = async () => {
@@ -668,7 +670,7 @@ export default function App() {
                 <div className="card">
                   <div className="inv-head">
                     <div className="dept-pills" style={{ marginBottom: 0 }}>
-                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`], ['payroll', 'Payroll'], ['attendance', 'Attendance'], ['remit', 'Statutory'], ['roster', 'Roster']].map(([k, label]) => (
+                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`], ['commissions', 'Commissions'], ['payroll', 'Payroll'], ['attendance', 'Attendance'], ['remit', 'Statutory'], ['roster', 'Roster']].map(([k, label]) => (
                         <button key={k} className={`pill ${hrTab === k ? 'active' : ''}`} onClick={() => setHrTab(k)}>{label}</button>
                       ))}
                     </div>
@@ -838,6 +840,36 @@ export default function App() {
                     </div>
                   ))}
 
+                  {hrTab === 'commissions' && (
+                    <>
+                      <p className="muted">Commission = paid invoice value from each rep's customer accounts × their rate. Flows into payroll runs and payslips automatically.</p>
+                      {commissions.map((c) => (
+                        <div key={c.staff_id} className="inv-row">
+                          <div className={`thread-ava ava-c${c.staff_id % 5}`}>{(c.name || '?')[0]}</div>
+                          <div className="thread-info">
+                            <b>{c.name} · {c.department}</b>
+                            <span>rate</span>
+                          </div>
+                          <div className="inv-right">
+                            <div className="inv-amt">{fmt(c.period.commission)}<span className="muted" style={{ fontSize: 10, fontWeight: 500 }}> this month</span></div>
+                            <span className="muted" style={{ fontSize: 11 }}>{c.period.paid_invoices} paid inv · {fmt(c.period.sales_value)} · all-time {fmt(c.all_time.commission)}</span>
+                            <div className="quick-actions" style={{ marginTop: 0 }}>
+                              <input
+                                type="number" min="0" step="0.5"
+                                style={{ width: 74, padding: '5px 8px' }}
+                                value={c.rate}
+                                onChange={async (e) => {
+                                  await api(`/staff/${c.staff_id}`, { method: 'PUT', body: JSON.stringify({ commission_rate: Number(e.target.value) }) });
+                                  setCommissions((await api('/commissions')).rows);
+                                }}
+                              />%
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
                   {hrTab === 'payroll' && (
                     <>
                       {activeRun ? (
@@ -861,7 +893,7 @@ export default function App() {
                                 <span>{p.department} · net {fmt(p.net)}</span>
                               </div>
                               <div className="inv-right">
-                                <span className="muted" style={{ fontSize: 11 }}>gross {fmt(p.gross)}</span>
+                                <span className="muted" style={{ fontSize: 11 }}>gross {fmt(p.gross)}{p.commission > 0 ? ` + comm ${fmt(p.commission)}` : ''}</span>
                                 <span className="muted" style={{ fontSize: 11 }}>pension −{fmt(p.pension)} · PAYE −{fmt(p.paye)}</span>
                                 <button className="btn-ghost sm" onClick={async () => {
                                   const res = await fetch(`${API}/payslips/${p.id}/pdf`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } });
@@ -1124,6 +1156,12 @@ export default function App() {
                 <option value="negotiation">Negotiation</option>
                 <option value="won">Won</option>
                 <option value="lost">Lost</option>
+              </select>
+            </div>
+            <div className="inv-item-row">
+              <select value={custForm.staff_id || ''} onChange={(e) => setCustForm({ ...custForm, staff_id: e.target.value || null })}>
+                <option value="">Sales rep: unassigned</option>
+                {(hr?.staff || []).filter((s) => s.department === 'sales').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div className="inv-item-row">
@@ -1511,7 +1549,7 @@ export default function App() {
                 <div className="thread-ava">🧾</div>
                 <div className="thread-info">
                   <b>{p.period} payslip</b>
-                  <span>gross {fmt(p.gross)} · pension −{fmt(p.pension)} · PAYE −{fmt(p.paye)}</span>
+                  <span>gross {fmt(p.gross)}{p.commission > 0 ? ` + commission ${fmt(p.commission)}` : ''} · pension −{fmt(p.pension)} · PAYE −{fmt(p.paye)}</span>
                 </div>
                 <div className="inv-right">
                   <div className="inv-amt">{fmt(p.net)}</div>
@@ -1572,6 +1610,16 @@ export default function App() {
                 <span className="chip draft">{sh.shift}</span>
               </div>
             ))}
+
+            <h3 style={{ marginTop: 14 }}>💵 My commissions</h3>
+            {commissions.filter((c) => c.staff_id === jwtPayload()?.staff_id).map((c) => (
+              <div key={c.staff_id}>
+                <div className="inv-line"><span>Rate</span><span>{c.rate}%</span></div>
+                <div className="inv-line"><span>This month ({c.period.paid_invoices} paid invoices · {fmt(c.period.sales_value)})</span><span className="inv-amt">{fmt(c.period.commission)}</span></div>
+                <div className="inv-line"><span>All-time commission</span><span>{fmt(c.all_time.commission)}</span></div>
+              </div>
+            ))}
+            {commissions.filter((c) => c.staff_id === jwtPayload()?.staff_id).length === 0 && <p className="muted">No commission data yet — your rate is set by HR.</p>}
           </div>
         )}
 
