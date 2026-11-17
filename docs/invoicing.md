@@ -37,9 +37,13 @@
 
 ## 5. Phasing
 
-- Phase A (now): create/list/detail/send/mark-paid, seed data.
-- Phase B: WhatsApp/email delivery with a pay link (Paystack), webhook auto-mark-paid,
-  receipts (PDF).
+- Phase A (DONE): create/list/detail/send/mark-paid, seed data.
+- Phase B (PARTIAL — pay links shipped): public pay page (`/pay.html?token=`,
+  no login needed), Paystack initialize + HMAC-SHA512 webhook behind
+  `PAYSTACK_SECRET_KEY` (set it to go live; without it the page runs clearly-labelled
+  demo-pay), WhatsApp share button (wa.me deep link with invoice summary + pay link),
+  copy-pay-link. Still open: receipts (PDF), Paystack callback polish, automated
+  WhatsApp delivery via Cloud API.
 - Phase C: recurring invoices, partial payments, credit notes, VAT breakdown.
 
 ## 6. Risks
