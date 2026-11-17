@@ -138,6 +138,10 @@ export default function App() {
       </aside>
 
       <main className="main">
+        <div className="mobile-topbar">
+          <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+          <button className="btn-ghost sm" onClick={logout}>🚪 Log out</button>
+        </div>
         {view === 'dashboard' && dash && (
           <>
             <h1>Good morning 👋</h1>
