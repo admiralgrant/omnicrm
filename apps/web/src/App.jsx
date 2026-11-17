@@ -43,6 +43,10 @@ export default function App() {
   const [fx, setFx] = useState(null);
   const [prodView, setProdView] = useState('list'); // list | form
   const [prodForm, setProdForm] = useState(null);
+  const [custView, setCustView] = useState('list'); // list | form
+  const [custForm, setCustForm] = useState(null);
+  const [tktView, setTktView] = useState('list'); // list | form
+  const [tktForm, setTktForm] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -215,6 +219,60 @@ export default function App() {
     await refreshProducts();
     setProdView('list'); setProdForm(null);
   };
+  const refreshContacts = async () => {
+    const c = await api('/contacts');
+    setContacts(c.contacts);
+  };
+  const openNewCustomer = () => {
+    setCustForm({ id: null, name: '', company: '', phone: '', email: '', tags: 'lead', status: 'lead', deal_value_ngn: 0, debt_ngn: 0 });
+    setCustView('form');
+  };
+  const openEditCustomer = (c) => {
+    setCustForm({ id: c.id, name: c.name, company: c.company || '', phone: c.phone || '', email: c.email || '', tags: c.tags || '', status: c.status || 'lead', deal_value_ngn: c.deal_value_ngn || 0, debt_ngn: c.debt_ngn || 0 });
+    setCustView('form');
+  };
+  const saveCustomer = async () => {
+    const { id, ...fields } = custForm;
+    if (!fields.name && !fields.company) return;
+    const body = JSON.stringify(fields);
+    if (id) await api(`/contacts/${id}`, { method: 'PUT', body });
+    else await api('/contacts', { method: 'POST', body });
+    await refreshContacts();
+    setCustView('list'); setCustForm(null);
+  };
+  const deleteCustomer = async () => {
+    if (!window.confirm(`Delete ${custForm.company || custForm.name}? Their messages and invoices will remain but be orphaned.`)) return;
+    await api(`/contacts/${custForm.id}`, { method: 'DELETE' });
+    await refreshContacts();
+    setCustView('list'); setCustForm(null);
+  };
+  const refreshTickets = async () => {
+    const t = await api('/tickets');
+    setTickets(t.tickets); setTicketCounts(t.counts);
+  };
+  const openNewTicket = () => {
+    setTktForm({ id: null, subject: '', contact_id: '', priority: 'medium', status: 'open' });
+    setTktView('form');
+  };
+  const openEditTicket = (t) => {
+    setTktForm({ id: t.id, subject: t.subject, contact_id: t.contact_id || '', priority: t.priority, status: t.status });
+    setTktView('form');
+  };
+  const saveTicket = async () => {
+    if (!tktForm.subject) return;
+    const { id, ...fields } = tktForm;
+    const body = JSON.stringify({ ...fields, contact_id: fields.contact_id || null });
+    if (id) await api(`/tickets/${id}`, { method: 'PUT', body });
+    else await api('/tickets', { method: 'POST', body });
+    await refreshTickets();
+    setTktView('list'); setTktForm(null);
+  };
+  const deleteTicket = async () => {
+    if (!window.confirm(`Delete ticket "${tktForm.subject}"?`)) return;
+    await api(`/tickets/${tktForm.id}`, { method: 'DELETE' });
+    await refreshTickets();
+    setTktView('list'); setTktForm(null);
+  };
 
   const nav = [
     ['dashboard', '🏠', 'Dashboard'],
@@ -284,7 +342,35 @@ export default function App() {
               </>
             )}
 
-            {dept === 'support' && (
+            {dept === 'support' && (tktView === 'form' && tktForm ? (
+              <div className="card">
+                <h3>{tktForm.id ? '✏️ Edit ticket' : '➕ New ticket'}</h3>
+                <label className="inv-label">Subject</label>
+                <input placeholder="e.g. Delivery delay on Lekki Phase 2 site" value={tktForm.subject} onChange={(e) => setTktForm({ ...tktForm, subject: e.target.value })} />
+                <label className="inv-label">Customer (optional)</label>
+                <select value={tktForm.contact_id} onChange={(e) => setTktForm({ ...tktForm, contact_id: e.target.value })}>
+                  <option value="">General</option>
+                  {contacts.map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
+                </select>
+                <div className="inv-item-row">
+                  <select value={tktForm.priority} onChange={(e) => setTktForm({ ...tktForm, priority: e.target.value })}>
+                    <option value="high">High priority</option>
+                    <option value="medium">Medium priority</option>
+                    <option value="low">Low priority</option>
+                  </select>
+                  <select value={tktForm.status} onChange={(e) => setTktForm({ ...tktForm, status: e.target.value })}>
+                    <option value="open">Open</option>
+                    <option value="pending">Pending</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={saveTicket}>{tktForm.id ? 'Save changes' : 'Create ticket'}</button>
+                  <button className="btn-ghost" onClick={() => { setTktView('list'); setTktForm(null); }}>Cancel</button>
+                  {tktForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteTicket}>🗑 Delete</button>}
+                </div>
+              </div>
+            ) : (
               <>
                 <div className="kpis">
                   <div className="kpi"><div className="label">Open tickets</div><div className="value">{ticketCounts.open || 0}</div></div>
@@ -293,7 +379,7 @@ export default function App() {
                   <div className="kpi"><div className="label">Inbox unread</div><div className="value">{threads.reduce((s, t) => s + (t.unread || 0), 0)}</div></div>
                 </div>
                 <div className="card">
-                  <h3>🛟 Support Tickets</h3>
+                  <div className="inv-head"><h3>🛟 Support Tickets</h3><button className="btn-primary sm" onClick={openNewTicket}>+ New ticket</button></div>
                   {tickets.map((t) => (
                     <div key={t.id} className="ticket">
                       <div className="ticket-info">
@@ -302,11 +388,12 @@ export default function App() {
                       </div>
                       <span className={`chip ${t.status}`}>{t.status}</span>
                       <span className={`chip pri-${t.priority}`}>{t.priority}</span>
+                      <button className="btn-ghost sm" onClick={() => openEditTicket(t)}>✏️</button>
                     </div>
                   ))}
                 </div>
               </>
-            )}
+            ))}
 
             {dept === 'inventory' && (prodView === 'form' && prodForm ? (
               <div className="card">
@@ -400,18 +487,56 @@ export default function App() {
           </>
         )}
 
-        {view === 'customers' && (
+        {view === 'customers' && (custView === 'form' && custForm ? (
           <div className="card">
-            <h3>Customer Book ({contacts.length})</h3>
+            <h3>{custForm.id ? '✏️ Edit customer' : '➕ Add customer'}</h3>
+            <div className="inv-item-row">
+              <input placeholder="Contact name" value={custForm.name} onChange={(e) => setCustForm({ ...custForm, name: e.target.value })} />
+              <input placeholder="Company" value={custForm.company} onChange={(e) => setCustForm({ ...custForm, company: e.target.value })} />
+            </div>
+            <div className="inv-item-row">
+              <input placeholder="Phone" value={custForm.phone} onChange={(e) => setCustForm({ ...custForm, phone: e.target.value })} />
+              <input placeholder="Email" value={custForm.email} onChange={(e) => setCustForm({ ...custForm, email: e.target.value })} />
+            </div>
+            <div className="inv-item-row">
+              <input placeholder="Tags (comma-separated)" value={custForm.tags} onChange={(e) => setCustForm({ ...custForm, tags: e.target.value })} />
+              <select value={custForm.status} onChange={(e) => setCustForm({ ...custForm, status: e.target.value })}>
+                <option value="lead">Lead</option>
+                <option value="contacted">Contacted</option>
+                <option value="proposal_sent">Proposal sent</option>
+                <option value="won">Won</option>
+                <option value="lost">Lost</option>
+              </select>
+            </div>
+            <div className="inv-item-row">
+              <input type="number" min="0" placeholder="Deal value ₦" value={custForm.deal_value_ngn} onChange={(e) => setCustForm({ ...custForm, deal_value_ngn: e.target.value })} />
+              <input type="number" min="0" placeholder="Debt ₦" value={custForm.debt_ngn} onChange={(e) => setCustForm({ ...custForm, debt_ngn: e.target.value })} />
+            </div>
+            <div className="quick-actions">
+              <button className="btn-primary" onClick={saveCustomer}>{custForm.id ? 'Save changes' : 'Add customer'}</button>
+              <button className="btn-ghost" onClick={() => { setCustView('list'); setCustForm(null); }}>Cancel</button>
+              {custForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteCustomer}>🗑 Delete</button>}
+            </div>
+          </div>
+        ) : (
+          <div className="card">
+            <div className="inv-head"><h3>Customer Book ({contacts.length})</h3><button className="btn-primary sm" onClick={openNewCustomer}>+ Add customer</button></div>
             {contacts.map((c) => (
-              <div key={c.id} className="cust">
-                <div className="cust-info"><b>{c.company || c.name}</b><span>{c.phone} · {c.status} · {c.tags}</span></div>
-                {c.deal_value_ngn > 0 && <div className="amt">{fmt(c.deal_value_ngn)}</div>}
-                {c.debt_ngn > 0 && <div className="debt">{fmt(c.debt_ngn)}</div>}
+              <div key={c.id} className="inv-row">
+                <div className="thread-ava">{(c.company || c.name || '?')[0]}</div>
+                <div className="thread-info">
+                  <b>{c.company || c.name}</b>
+                  <span>{c.phone} · {c.status} · {c.tags}</span>
+                </div>
+                <div className="inv-right">
+                  {c.deal_value_ngn > 0 && <div className="amt">{fmt(c.deal_value_ngn)}</div>}
+                  {c.debt_ngn > 0 && <div className="debt">{fmt(c.debt_ngn)}</div>}
+                  <button className="btn-ghost sm" onClick={() => openEditCustomer(c)}>✏️ Edit</button>
+                </div>
               </div>
             ))}
           </div>
-        )}
+        ))}
 
         {view === 'inbox' && (
           <div className="card inbox">
