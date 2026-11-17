@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createHmac, randomUUID } from 'node:crypto';
+import PDFDocument from 'pdfkit';
 import db from './db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -246,6 +247,8 @@ app.get('/tickets', { preHandler: requireAuth }, async (req) => {
 // ---- FX: live naira rates with fallback (never blocks invoicing) ----
 const FX_CURRENCIES = ['NGN', 'USD', 'EUR', 'GBP'];
 const FX_FALLBACK = { USD: 1350, EUR: 1486, GBP: 1780 };
+// Revenue stream: processing fee on foreign-currency conversion (of invoice total)
+const FX_FEE_RATE = Number(process.env.FX_FEE_RATE || 0.015);
 let FX_CACHE = { rates: null, at: 0, source: 'fallback' };
 async function fxRates() {
   if (FX_CACHE.rates && Date.now() - FX_CACHE.at < 10 * 60 * 1000) return FX_CACHE;
@@ -289,7 +292,7 @@ app.get('/invoices', { preHandler: requireAuth }, async (req) => {
 });
 
 app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
-  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone FROM invoices i JOIN contacts c ON c.id = i.contact_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
+  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone, c.email FROM invoices i JOIN contacts c ON c.id = i.contact_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
   return { invoice: { ...inv, status: invStatus(inv) }, items, pay_link: `/pay.html?token=${inv.pay_token}` };
@@ -308,12 +311,15 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const taxRate = 7.5; // Nigerian VAT
   const tax = Math.round(subtotal * (taxRate / 100));
   const total = subtotal + tax;
-  const ngnTotal = Math.round(total * rate);
+  const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE; // conversion processing fee
+  const fee = Math.round(total * feeRate);
+  const grandTotal = total + fee;
+  const ngnTotal = Math.round(grandTotal * rate);
   const year = new Date().getFullYear();
   const count = db.prepare("SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND number LIKE ?").get(req.user.id, `INV-${year}-%`).c;
   const number = `INV-${year}-${String(count + 1).padStart(3, '0')}`;
-  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token, currency, fx_rate, ngn_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID(), cur, rate, ngnTotal);
+  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token, currency, fx_rate, ngn_total, fee_rate, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID(), cur, rate, ngnTotal, feeRate, fee);
   for (const it of items) {
     const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
@@ -356,7 +362,7 @@ app.get('/pay/:token', async (req, reply) => {
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
   return {
-    invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total, currency: inv.currency, fx_rate: inv.fx_rate, ngn_total: inv.ngn_total || inv.total },
+    invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total, fee: inv.fee, fee_rate: inv.fee_rate, currency: inv.currency, fx_rate: inv.fx_rate, ngn_total: inv.ngn_total || inv.total },
     items,
     demo: !paystackEnabled(),
   };
@@ -368,13 +374,14 @@ app.post('/pay/:token/initialize', async (req, reply) => {
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
   // Naira invoices settle in NGN; foreign-currency invoices settle in USD on Paystack's rails.
+  const grand = inv.total + (inv.fee || 0);
   let payCurrency = 'NGN';
-  let amount = Math.round(inv.total * 100); // kobo
+  let amount = Math.round(grand * 100); // kobo
   if (inv.currency !== 'NGN') {
     payCurrency = 'USD';
-    const { rates, source } = await fxRates();
+    const { rates } = await fxRates();
     const usdRate = rates.USD || FX_FALLBACK.USD;
-    amount = Math.round((inv.total * (inv.fx_rate || 1) / usdRate) * 100); // cents
+    amount = Math.round((grand * (inv.fx_rate || 1) / usdRate) * 100); // cents
   }
   const body = JSON.stringify({
     email: inv.biz_email,
@@ -420,6 +427,83 @@ app.post('/webhooks/paystack', async (req, reply) => {
     }
   }
   return { ok: true };
+});
+
+// ---- invoice PDF download ----
+const CUR_SYMBOL = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
+app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => {
+  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone, c.email, u.name AS biz_name, u.business_name FROM invoices i JOIN contacts c ON c.id = i.contact_id JOIN users u ON u.id = i.user_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
+  const cur = inv.currency;
+  const sym = CUR_SYMBOL[cur] || '₦';
+  const money = (n) => `${sym}${Number(n).toLocaleString()}`;
+  const biz = inv.business_name || inv.biz_name || 'OmniCRM Business';
+  const grand = inv.total + (inv.fee || 0);
+
+  const doc = new PDFDocument({ size: 'A4', margin: 48, info: { Title: `Invoice ${inv.number}` } });
+  reply.header('Content-Type', 'application/pdf');
+  reply.header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
+  doc.pipe(reply.raw);
+
+  doc.fontSize(22).font('Helvetica-Bold').text('INVOICE', { characterSpacing: 3 });
+  doc.moveDown(0.3).fontSize(11).font('Helvetica').fillColor('#444')
+    .text(biz, { align: 'right' }).text('Lagos, Nigeria', { align: 'right' });
+  doc.moveDown(0.6);
+  doc.fontSize(13).font('Helvetica-Bold').fillColor('#000').text(inv.number);
+  doc.fontSize(10).font('Helvetica').fillColor('#555')
+    .text(`Issued: ${inv.issue_date}`)
+    .text(`Due: ${inv.due_date}`)
+    .text(`Status: ${invStatus(inv).toUpperCase()}`);
+  doc.moveDown(0.8);
+  doc.fontSize(11).font('Helvetica-Bold').fillColor('#000').text('BILL TO');
+  doc.fontSize(10).font('Helvetica').fillColor('#444')
+    .text(inv.company || inv.name)
+    .text(inv.phone || '')
+    .text(inv.email || '');
+  doc.moveDown(1.2);
+
+  // items table
+  const top = doc.y;
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#fff');
+  doc.rect(48, top, 499, 18).fill('#0f2319');
+  doc.fillColor('#fff').text('Description', 56, top + 5, { width: 250 });
+  doc.text('Qty', 306, top + 5, { width: 40, align: 'right' });
+  doc.text('Unit', 350, top + 5, { width: 80, align: 'right' });
+  doc.text('Amount', 430, top + 5, { width: 109, align: 'right' });
+  let y = top + 18;
+  doc.font('Helvetica').fillColor('#222');
+  for (const it of items) {
+    doc.fillColor('#222').fontSize(9.5)
+      .text(it.description, 56, y + 5, { width: 250 })
+      .text(String(it.qty), 306, y + 5, { width: 40, align: 'right' })
+      .text(money(it.unit_price), 350, y + 5, { width: 80, align: 'right' })
+      .text(money(it.amount), 430, y + 5, { width: 109, align: 'right' });
+    y += 20;
+  }
+  // totals
+  const t = (label, val, bold) => {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 9.5)
+      .text(label, 320, y + 6, { width: 120, align: 'right' })
+      .text(val, 440, y + 6, { width: 100, align: 'right' });
+    y += 18;
+  };
+  y += 8;
+  t('Subtotal', money(inv.subtotal));
+  t('VAT (7.5%)', money(inv.tax));
+  if (inv.fee > 0) t(`Processing fee (${(inv.fee_rate * 100).toFixed(1)}%)`, money(inv.fee));
+  t('TOTAL', money(grand), true);
+  if (cur !== 'NGN') {
+    doc.font('Helvetica').fontSize(9).fillColor('#555')
+      .text(`Naira equivalent @ ${Number(inv.fx_rate).toLocaleString()} ≈ ₦${Number(inv.ngn_total).toLocaleString()}`, 320, y + 2, { width: 220, align: 'right' });
+  }
+  doc.moveDown(2.5);
+  doc.fontSize(9).fillColor('#555')
+    .text('Pay online: use the secure payment link sent with this invoice.', { align: 'center' });
+  doc.fontSize(8).fillColor('#888')
+    .text('Thank you for your business.', { align: 'center' });
+
+  doc.end();
 });
 
 // ---- health ----
