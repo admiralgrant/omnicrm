@@ -243,6 +243,33 @@ app.get('/tickets', { preHandler: requireAuth }, async (req) => {
   return { tickets: rows, counts };
 });
 
+// ---- FX: live naira rates with fallback (never blocks invoicing) ----
+const FX_CURRENCIES = ['NGN', 'USD', 'EUR', 'GBP'];
+const FX_FALLBACK = { USD: 1350, EUR: 1486, GBP: 1780 };
+let FX_CACHE = { rates: null, at: 0, source: 'fallback' };
+async function fxRates() {
+  if (FX_CACHE.rates && Date.now() - FX_CACHE.at < 10 * 60 * 1000) return FX_CACHE;
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD');
+    const d = await res.json();
+    if (d.result === 'success' && d.rates?.NGN) {
+      const ngnPerUsd = d.rates.NGN;
+      FX_CACHE = {
+        rates: { USD: ngnPerUsd, EUR: ngnPerUsd / d.rates.EUR, GBP: ngnPerUsd / d.rates.GBP },
+        at: Date.now(),
+        source: 'live',
+      };
+      return FX_CACHE;
+    }
+  } catch { /* fall back silently */ }
+  return { rates: FX_FALLBACK, at: FX_CACHE.at, source: 'fallback' };
+}
+
+app.get('/fx', async () => {
+  const { rates, source, at } = await fxRates();
+  return { base: 'NGN', rates, source, fetched_at: new Date(at).toISOString() };
+});
+
 // ---- invoicing ----
 const invStatus = (inv) => (inv.status === 'sent' && inv.due_date < new Date().toISOString().slice(0, 10) ? 'overdue' : inv.status);
 
@@ -256,7 +283,7 @@ app.get('/invoices', { preHandler: requireAuth }, async (req) => {
   let receivables = 0;
   for (const i of invoices) {
     counts[i.status] = (counts[i.status] || 0) + 1;
-    if (i.status === 'sent' || i.status === 'overdue') receivables += i.total;
+    if (i.status === 'sent' || i.status === 'overdue') receivables += i.ngn_total || i.total;
   }
   return { invoices, counts, receivables };
 });
@@ -269,19 +296,24 @@ app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
-  const { contact_id, due_date, items } = req.body || {};
+  const { contact_id, due_date, items, currency } = req.body || {};
   if (!contact_id || !Array.isArray(items) || items.length === 0) return reply.code(400).send({ error: 'contact_id, due_date and items are required' });
   const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
+  const cur = (currency || 'NGN').toUpperCase();
+  if (!FX_CURRENCIES.includes(cur)) return reply.code(400).send({ error: `Unsupported currency: ${cur}. Use NGN, USD, EUR or GBP.` });
+  const fx = await fxRates();
+  const rate = cur === 'NGN' ? 1 : (fx.rates[cur] || FX_FALLBACK[cur]);
   const subtotal = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
   const taxRate = 7.5; // Nigerian VAT
   const tax = Math.round(subtotal * (taxRate / 100));
   const total = subtotal + tax;
+  const ngnTotal = Math.round(total * rate);
   const year = new Date().getFullYear();
   const count = db.prepare("SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND number LIKE ?").get(req.user.id, `INV-${year}-%`).c;
   const number = `INV-${year}-${String(count + 1).padStart(3, '0')}`;
-  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID());
+  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token, currency, fx_rate, ngn_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID(), cur, rate, ngnTotal);
   for (const it of items) {
     const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
@@ -306,8 +338,8 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
-    .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) paid ✅`);
-  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.total, inv.contact_id, req.user.id);
+    .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()} ≈ ₦${Number(inv.ngn_total || inv.total).toLocaleString()}) paid ✅`);
+  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.ngn_total || inv.total, inv.contact_id, req.user.id);
   return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
 });
 
@@ -323,7 +355,11 @@ app.get('/pay/:token', async (req, reply) => {
     WHERE i.pay_token = ?`).get(req.params.token);
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
-  return { invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total }, items, demo: !paystackEnabled() };
+  return {
+    invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total, currency: inv.currency, fx_rate: inv.fx_rate, ngn_total: inv.ngn_total || inv.total },
+    items,
+    demo: !paystackEnabled(),
+  };
 });
 
 app.post('/pay/:token/initialize', async (req, reply) => {
@@ -331,11 +367,20 @@ app.post('/pay/:token/initialize', async (req, reply) => {
   const inv = db.prepare('SELECT i.*, u.email AS biz_email FROM invoices i JOIN users u ON u.id = i.user_id WHERE i.pay_token = ?').get(req.params.token);
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
+  // Naira invoices settle in NGN; foreign-currency invoices settle in USD on Paystack's rails.
+  let payCurrency = 'NGN';
+  let amount = Math.round(inv.total * 100); // kobo
+  if (inv.currency !== 'NGN') {
+    payCurrency = 'USD';
+    const { rates, source } = await fxRates();
+    const usdRate = rates.USD || FX_FALLBACK.USD;
+    amount = Math.round((inv.total * (inv.fx_rate || 1) / usdRate) * 100); // cents
+  }
   const body = JSON.stringify({
     email: inv.biz_email,
-    amount: Math.round(inv.total * 100), // kobo
-    currency: 'NGN',
-    metadata: { invoice_id: inv.id, pay_token: inv.pay_token },
+    amount,
+    currency: payCurrency,
+    metadata: { invoice_id: inv.id, pay_token: inv.pay_token, invoice_currency: inv.currency },
     callback_url: `${req.headers.origin || ''}/pay.html?token=${inv.pay_token}`,
   });
   const res = await fetch('https://api.paystack.co/transaction/initialize', {
@@ -356,8 +401,8 @@ app.post('/pay/:token/demo-pay', async (req, reply) => {
   if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
   db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
-    .run(inv.user_id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) paid via pay link (demo)`);
-  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.total, inv.contact_id, inv.user_id);
+    .run(inv.user_id, inv.contact_id, `Invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()} ≈ ₦${Number(inv.ngn_total || inv.total).toLocaleString()}) paid via pay link (demo)`);
+  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.ngn_total || inv.total, inv.contact_id, inv.user_id);
   return { ok: true, status: 'paid', demo: true };
 });
 
