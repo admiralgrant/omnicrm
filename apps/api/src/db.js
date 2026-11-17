@@ -91,7 +91,31 @@ CREATE TABLE IF NOT EXISTS tickets (
   priority TEXT NOT NULL DEFAULT 'medium', -- low | medium | high
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  number TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'draft',  -- draft | sent | paid | overdue
+  issue_date TEXT NOT NULL DEFAULT (date('now')),
+  due_date TEXT NOT NULL,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  tax REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_id);
+
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+  description TEXT NOT NULL,
+  qty REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_invoice_items ON invoice_items(invoice_id);
 `);
 
 export default db;
