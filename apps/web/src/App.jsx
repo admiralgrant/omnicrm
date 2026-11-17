@@ -40,20 +40,22 @@ export default function App() {
   const [invItems, setInvItems] = useState([]);
   const [newInv, setNewInv] = useState(null);
   const [payLink, setPayLink] = useState('');
+  const [fx, setFx] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
     (async () => {
       try {
-        const [d, c, f, t, p, tk, iv] = await Promise.all([
+        const [d, c, f, t, p, tk, iv, fxD] = await Promise.all([
           api('/dashboard'), api('/contacts'), api('/ai/followups'), api('/inbox'),
-          api('/products'), api('/tickets'), api('/invoices'),
+          api('/products'), api('/tickets'), api('/invoices'), api('/fx'),
         ]);
         setDash(d.kpis); setContacts(c.contacts); setFollowups(f.followups); setThreads(t.threads);
         setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
         setTickets(tk.tickets); setTicketCounts(tk.counts);
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
+        setFx(fxD);
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -81,6 +83,8 @@ export default function App() {
   const logout = () => { localStorage.removeItem(tokenKey); setToken(null); setAuthMode('landing'); setDash(null); setContacts([]); };
 
   const fmt = (n) => '₦' + Number(n).toLocaleString();
+  const CURS = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
+  const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString();
 
   if (loading) return <div className="center">Loading…</div>;
 
@@ -138,13 +142,15 @@ export default function App() {
   };
   const newInvoice = () => {
     setInvView('new');
-    setNewInv({ contact_id: '', due_date: '', items: [{ description: '', qty: 1, unit_price: '' }] });
+    setNewInv({ contact_id: '', due_date: '', currency: 'NGN', items: [{ description: '', qty: 1, unit_price: '' }] });
+    api('/fx').then(setFx).catch(() => {});
   };
   const shareWhatsApp = () => {
     const intl = String(activeInv.phone || '').replace(/^0/, '234');
     const link = `${location.origin}${payLink}`;
-    const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ₦${Number(it.amount).toLocaleString()}`).join('\n');
-    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ₦${Number(activeInv.total).toLocaleString()} (incl. 7.5% VAT)\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
+    const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
+    const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
+    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ${fmtCur(activeInv.total, activeInv.currency)} (incl. 7.5% VAT)${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
     window.open(`https://wa.me/${intl}?text=${encodeURIComponent(msg)}`, '_blank');
   };
   const copyPayLink = () => {
@@ -375,9 +381,12 @@ export default function App() {
                     <div className="thread-ava">🧾</div>
                     <div className="thread-info">
                       <b>{i.number} · {i.company || i.name}</b>
-                      <span>Due {i.due_date} · VAT ₦{Number(i.tax).toLocaleString()}</span>
+                      <span>Due {i.due_date} · VAT {fmtCur(i.tax, i.currency)}</span>
                     </div>
-                    <div className="inv-amt">{fmt(i.total)}</div>
+                    <div className="inv-amt">
+                      {fmtCur(i.total, i.currency)}
+                      {i.currency !== 'NGN' && <span className="muted inv-equiv"> ≈ {fmt(i.ngn_total)}</span>}
+                    </div>
                     <span className={`chip ${i.status}`}>{i.status}</span>
                   </div>
                 ))}
@@ -393,6 +402,16 @@ export default function App() {
                 </select>
                 <label className="inv-label">Due date</label>
                 <input type="date" value={newInv.due_date} onChange={(e) => setNewInv({ ...newInv, due_date: e.target.value })} />
+                <label className="inv-label">Currency</label>
+                <select value={newInv.currency} onChange={(e) => setNewInv({ ...newInv, currency: e.target.value })}>
+                  <option value="NGN">₦ Naira (NGN)</option>
+                  <option value="USD">$ US Dollar (USD)</option>
+                  <option value="EUR">€ Euro (EUR)</option>
+                  <option value="GBP">£ British Pound (GBP)</option>
+                </select>
+                {fx && newInv.currency !== 'NGN' && (
+                  <p className="muted fx-hint">1 {newInv.currency} ≈ {fmt(fx.rates[newInv.currency])} · {fx.source === 'live' ? 'live rate' : 'offline rate'} — books stay in naira automatically</p>
+                )}
                 <label className="inv-label">Items</label>
                 {newInv.items.map((it, idx) => (
                   <div key={idx} className="inv-item-row">
@@ -445,12 +464,15 @@ export default function App() {
                   {invItems.map((it) => (
                     <div key={it.id} className="inv-line">
                       <span>{it.description} × {it.qty}</span>
-                      <span>{fmt(it.amount)}</span>
+                      <span>{fmtCur(it.amount, activeInv.currency)}</span>
                     </div>
                   ))}
-                  <div className="inv-line muted"><span>Subtotal</span><span>{fmt(activeInv.subtotal)}</span></div>
-                  <div className="inv-line muted"><span>VAT (7.5%)</span><span>{fmt(activeInv.tax)}</span></div>
-                  <div className="inv-line total"><span>Total</span><span>{fmt(activeInv.total)}</span></div>
+                  <div className="inv-line muted"><span>Subtotal</span><span>{fmtCur(activeInv.subtotal, activeInv.currency)}</span></div>
+                  <div className="inv-line muted"><span>VAT (7.5%)</span><span>{fmtCur(activeInv.tax, activeInv.currency)}</span></div>
+                  <div className="inv-line total"><span>Total</span><span>{fmtCur(activeInv.total, activeInv.currency)}</span></div>
+                  {activeInv.currency !== 'NGN' && (
+                    <div className="inv-line muted"><span>Naira equivalent @ {Number(activeInv.fx_rate).toLocaleString()}</span><span>{fmt(activeInv.ngn_total)}</span></div>
+                  )}
                 </div>
                 <div className="quick-actions">
                   {activeInv.status === 'draft' && <button className="btn-primary" onClick={sendInvoice}>Mark as sent</button>}
