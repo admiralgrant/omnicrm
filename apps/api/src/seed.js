@@ -112,13 +112,14 @@ tkt('Alhaji Bello (Wholesaler)', 'Re-order request for Texcote', 'closed', 'low'
 console.log('Seeded products and support tickets.');
 
 // ---- seed invoices ----
-const inv = (company, number, status, issue, due, items) => {
+const inv = (company, number, status, issue, due, items, currency = 'NGN', fxRate = 1) => {
   const c = db.prepare('SELECT id FROM contacts WHERE company = ? AND user_id = ?').get(company, uid);
   if (!c) return;
   const subtotal = items.reduce((s, [d, q, up]) => s + q * up, 0);
   const tax = Math.round(subtotal * 0.075);
-  db.prepare('INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, tax_rate, tax, total) VALUES (?, ?, ?, ?, ?, ?, ?, 7.5, ?, ?)')
-    .run(uid, c.id, number, status, issue, due, subtotal, tax, subtotal + tax);
+  const total = subtotal + tax;
+  db.prepare('INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, tax_rate, tax, total, currency, fx_rate, ngn_total) VALUES (?, ?, ?, ?, ?, ?, ?, 7.5, ?, ?, ?, ?, ?)')
+    .run(uid, c.id, number, status, issue, due, subtotal, tax, total, currency, fxRate, Math.round(total * fxRate));
   const invId = db.prepare('SELECT id FROM invoices WHERE number = ?').get(number).id;
   for (const [d, q, up] of items) {
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
@@ -144,5 +145,9 @@ inv('Alhaji Bello (Wholesaler)', 'INV-2026-004', 'paid', '2026-10-20', '2026-10-
 inv('Mama Nkechi Retail', 'INV-2026-005', 'sent', '2026-11-14', '2026-11-20', [
   ['Emulsion Paint — Satin White 4L', 8, 5100],
 ]);
+// international customer — USD invoice, converted at the live rate at creation
+inv('Knight Frank Nigeria', 'INV-2026-006', 'sent', '2026-11-15', '2026-12-05', [
+  ['Emulsion Paint — Satin White 20L', 45, 18.2],
+], 'USD', 1350.055103);
 
 console.log('Seeded invoices.');
