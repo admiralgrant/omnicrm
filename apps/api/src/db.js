@@ -55,6 +55,18 @@ CREATE TABLE IF NOT EXISTS deals (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_deals_user ON deals(user_id);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  direction TEXT NOT NULL DEFAULT 'out',   -- in | out
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sent',     -- draft | sent | failed
+  read INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_contact ON messages(contact_id);
 `);
 
 export default db;
