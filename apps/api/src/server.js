@@ -1158,6 +1158,32 @@ app.post('/attendance/clock-out', { preHandler: requireAuth }, async (req, reply
   return { attendance: db.prepare('SELECT * FROM attendance WHERE id = ?').get(existing.id) };
 });
 
+// ---- revocable demo links ----
+app.get('/demo/:token', async (req, reply) => {
+  const row = db.prepare('SELECT * FROM demo_links WHERE token = ?').get(req.params.token);
+  if (!row || !row.active) return reply.code(403).send({ error: 'This demo link is no longer active.' });
+  return { ok: true, label: row.label };
+});
+
+app.get('/demo-links', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare('SELECT * FROM demo_links WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
+  return { links: rows };
+});
+
+app.post('/demo-links', { preHandler: requireAuth }, async (req, reply) => {
+  const { label } = req.body || {};
+  const token = `${randomUUID().slice(0, 8)}-${randomUUID().slice(0, 8)}`;
+  const info = db.prepare('INSERT INTO demo_links (user_id, token, label) VALUES (?, ?, ?)').run(req.user.id, token, label || null);
+  return { link: db.prepare('SELECT * FROM demo_links WHERE id = ?').get(info.lastInsertRowid), url: `/demo.html?token=${token}` };
+});
+
+app.delete('/demo-links/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM demo_links WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Link not found' });
+  db.prepare("UPDATE demo_links SET active = 0, revoked_at = datetime('now') WHERE id = ?").run(req.params.id);
+  return { ok: true, revoked: existing.label || existing.token };
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
 
