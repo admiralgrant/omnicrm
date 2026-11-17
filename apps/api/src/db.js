@@ -250,6 +250,10 @@ CREATE TABLE IF NOT EXISTS invoice_items (
 CREATE INDEX IF NOT EXISTS idx_invoice_items ON invoice_items(invoice_id);
 `);
 
+// migration: users.is_guest for read-only demo accounts
+const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+if (!userCols.includes('is_guest')) db.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0');
+
 // migration: pay_token for public pay links
 import { randomUUID } from 'node:crypto';
 const invCols = db.prepare("PRAGMA table_info(invoices)").all().map((c) => c.name);
