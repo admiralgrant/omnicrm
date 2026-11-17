@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pay Invoice — OmniCRM</title>
+  <style>
+    :root { --accent: #0b8f5c; --line: #e3e9e5; --ink: #17251e; --soft: #5d6d66; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: "DM Sans", system-ui, sans-serif; background: #f4f7f4; color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 24px -12px rgba(20,36,28,0.18); width: 100%; max-width: 430px; padding: 24px; }
+    .logo { display: flex; align-items: center; gap: 9px; margin-bottom: 18px; }
+    .mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), #12b57b); display: grid; place-items: center; color: #fff; font-weight: 700; }
+    .logo b { display: block; }
+    .logo span { font-size: 11px; color: #7f9c8a; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .sub { color: var(--soft); font-size: 13px; margin-bottom: 18px; }
+    .amt { font-size: 34px; font-weight: 800; letter-spacing: -1px; margin-bottom: 16px; }
+    .row { display: flex; justify-content: space-between; padding: 7px 0; font-size: 13.5px; border-bottom: 1px solid var(--line); }
+    .row:last-of-type { border-bottom: 0; }
+    .totals { border-top: 2px solid var(--ink); margin-top: 10px; padding-top: 10px; font-weight: 700; }
+    .status { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; border-radius: 20px; padding: 3px 10px; }
+    .paid { background: #e7f6ec; color: #1e8449; }
+    .btn { display: block; width: 100%; margin-top: 18px; padding: 14px; border: 0; border-radius: 12px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .demo-note { margin-top: 12px; font-size: 12px; color: #8a6a12; background: #fff8ea; border: 1px dashed #e3c877; border-radius: 10px; padding: 10px 12px; }
+    .err { color: #c0392b; font-size: 13px; margin-top: 12px; }
+    .ok { color: #1e8449; font-size: 14px; font-weight: 700; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="app"><p style="color:var(--soft)">Loading invoice…</p></div>
+  <script>
+    const token = new URLSearchParams(location.search).get('token');
+    const el = document.getElementById('app');
+    const fmt = (n) => '₦' + Number(n).toLocaleString();
+    if (!token) { el.innerHTML = '<p class="err">Missing invoice link.</p>'; }
+    (async () => {
+      try {
+        const res = await fetch('/api/pay/' + encodeURIComponent(token));
+        if (!res.ok) throw new Error((await res.json()).error || 'Invoice not found');
+        const { invoice, items, demo } = await res.json();
+        const rows = items.map((it) => `<div class="row"><span>${it.description} × ${it.qty}</span><span>${fmt(it.amount)}</span></div>`).join('');
+        let action;
+        if (invoice.status === 'paid') {
+          action = `<button class="btn" disabled>Already paid ✓</button>`;
+        } else if (demo) {
+          action = `<button class="btn" onclick="demoPay()">Mark as paid (demo)</button>
+                    <div class="demo-note">Demo mode — Paystack is not connected yet. This button simulates a successful payment so you can feel the flow.</div>`;
+        } else {
+          action = `<button class="btn" onclick="initPay()">Pay ${fmt(invoice.total)} with Paystack</button>`;
+        }
+        el.innerHTML = `
+          <div class="logo"><div class="mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+          <h1>${invoice.number}</h1>
+          <div class="sub">${invoice.company} · issued ${invoice.issue_date} · due ${invoice.due_date}</div>
+          <span class="status ${invoice.status}">${invoice.status}</span>
+          <div class="amt" style="margin-top:14px">${fmt(invoice.total)}</div>
+          ${rows}
+          <div class="row"><span>Subtotal</span><span>${fmt(invoice.subtotal)}</span></div>
+          <div class="row"><span>VAT (7.5%)</span><span>${fmt(invoice.tax)}</span></div>
+          <div class="row totals"><span>Total</span><span>${fmt(invoice.total)}</span></div>
+          ${action}
+          <p class="ok" id="msg"></p>`;
+      } catch (e) {
+        el.innerHTML = `<h1>Invoice</h1><p class="err">${e.message}</p>`;
+      }
+    })();
+    async function demoPay() {
+      document.querySelector('.btn').disabled = true;
+      const res = await fetch('/api/pay/' + encodeURIComponent(token) + '/demo-pay', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { location.reload(); } else { document.getElementById('msg').textContent = data.error || 'Failed'; document.querySelector('.btn').disabled = false; }
+    }
+    async function initPay() {
+      document.querySelector('.btn').disabled = true;
+      const res = await fetch('/api/pay/' + encodeURIComponent(token) + '/initialize', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (data.authorization_url) { location.href = data.authorization_url; }
+      else { document.getElementById('msg').textContent = data.error || 'Could not start payment'; document.querySelector('.btn').disabled = false; }
+    }
+  </script>
+</body>
+</html>
