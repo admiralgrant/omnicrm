@@ -79,6 +79,9 @@ export default function App() {
   const [activeRun, setActiveRun] = useState(null);
   const [attendance, setAttendance] = useState([]);
   const [portal, setPortal] = useState(null);
+  const [remit, setRemit] = useState(null);
+  const [shifts, setShifts] = useState([]);
+  const [portalShifts, setPortalShifts] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [loading, setLoading] = useState(true);
 
@@ -101,7 +104,9 @@ export default function App() {
         try { setHr(await api('/hr-dashboard')); } catch { /* non-HR staff */ }
         try { setPayrollRuns((await api('/payroll/runs')).runs); } catch { /* non-HR */ }
         try { setAttendance((await api('/attendance')).attendance); } catch { /* non-HR */ }
-        if (meJwt()) { try { setPortal(await api('/me/portal')); } catch { /* n/a */ } }
+        try { setRemit(await api('/remittances')); } catch { /* non-HR */ }
+        try { setShifts((await api('/shifts')).shifts); } catch { /* non-HR */ }
+        if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -660,7 +665,7 @@ export default function App() {
                 <div className="card">
                   <div className="inv-head">
                     <div className="dept-pills" style={{ marginBottom: 0 }}>
-                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`], ['payroll', 'Payroll'], ['attendance', 'Attendance']].map(([k, label]) => (
+                      {[['staff', `Staff (${hr.staff.length})`], ['advances', `Advances (${hr.advances.length})`], ['leaves', `Leave (${hr.leaves.length})`], ['payroll', 'Payroll'], ['attendance', 'Attendance'], ['remit', 'Statutory'], ['roster', 'Roster']].map(([k, label]) => (
                         <button key={k} className={`pill ${hrTab === k ? 'active' : ''}`} onClick={() => setHrTab(k)}>{label}</button>
                       ))}
                     </div>
@@ -869,7 +874,16 @@ export default function App() {
                           ))}
                           <div className="quick-actions">
                             {activeRun.run.status === 'draft' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); }}>Approve payroll</button>}
-                            {activeRun.run.status === 'approved' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); }}>Mark as paid ✓</button>}
+                            {activeRun.run.status === 'approved' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); setRemit(await api('/remittances')); }}>Mark as paid ✓</button>}
+                            <button className="btn-ghost" onClick={async () => {
+                              const res = await fetch(`${API}/payroll/runs/${activeRun.run.id}/journal.csv`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } });
+                              const blob = await res.blob();
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url; a.download = `payroll-journal-${activeRun.run.period}.csv`;
+                              document.body.appendChild(a); a.click(); a.remove();
+                              URL.revokeObjectURL(url);
+                            }}>⬇ Journal CSV (accountant)</button>
                           </div>
                         </>
                       ) : (
@@ -913,6 +927,68 @@ export default function App() {
                                 <span className="chip closed">done</span>
                               )}
                             </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                  {hrTab === 'remit' && remit && (
+                    <>
+                      <div className="kpis">
+                        <div className="kpi"><div className="label">Pending obligations</div><div className="value">{remit.pending_count}</div></div>
+                        <div className="kpi"><div className="label">Pending total</div><div className="value">{fmt(remit.pending_total)}</div></div>
+                        <div className="kpi"><div className="label">Next due</div><div className="value" style={{ fontSize: 16 }}>{remit.next_due ? `${remit.next_due.type.toUpperCase()} · ${remit.next_due.due_date}` : '—'}</div></div>
+                      </div>
+                      <p className="muted">Filing calendar: PAYE due by the 10th of the following month · pension (staff 8% + employer 10%) due ~7 days after salary payment.</p>
+                      {remit.remittances.map((r) => (
+                        <div key={r.id} className="inv-row">
+                          <div className="thread-ava">{r.type === 'paye' ? '🏛' : '🛡'}</div>
+                          <div className="thread-info">
+                            <b>{r.type.toUpperCase()} — {r.period}</b>
+                            <span>due {r.due_date}{r.due_date < new Date().toISOString().slice(0, 10) && r.status === 'pending' ? ' · OVERDUE' : ''}</span>
+                          </div>
+                          <div className="inv-right">
+                            <div className="inv-amt">{fmt(r.amount)}</div>
+                            {r.status === 'pending' ? (
+                              <button className="btn-primary sm" onClick={async () => { await api(`/remittances/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) }); setRemit(await api('/remittances')); }}>Mark paid</button>
+                            ) : (
+                              <span className="chip closed">paid</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {hrTab === 'roster' && (
+                    <>
+                      <p className="muted">Next 7 days — pick each staff member's shift.</p>
+                      {[0, 1, 2, 3, 4, 5, 6].map((d) => {
+                        const date = new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+                        const label = new Date(Date.now() + d * 864e5).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+                        return (
+                          <div key={date} className="roster-day">
+                            <b className="roster-date">{label}</b>
+                            {hr.staff.map((s) => {
+                              const row = shifts.find((sh) => sh.staff_id === s.id && sh.date === date);
+                              return (
+                                <div key={s.id} className="roster-row">
+                                  <span>{s.name.split(' ')[0]}</span>
+                                  <select
+                                    value={row?.shift || 'morning'}
+                                    onChange={async (e) => {
+                                      await api('/shifts', { method: 'PUT', body: JSON.stringify({ staff_id: s.id, date, shift: e.target.value }) });
+                                      setShifts((await api('/shifts')).shifts);
+                                    }}
+                                  >
+                                    <option value="morning">🌅 Morning</option>
+                                    <option value="afternoon">🌤 Afternoon</option>
+                                    <option value="night">🌙 Night</option>
+                                    <option value="off">😴 Off</option>
+                                  </select>
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })}
@@ -1454,6 +1530,15 @@ export default function App() {
                 setPortal(await api('/me/portal'));
               }}>Request leave</button>
             </div>
+
+            <h3 style={{ marginTop: 14 }}>📅 My shifts (next 7 days)</h3>
+            {portalShifts.length === 0 && <p className="muted">No shifts assigned yet.</p>}
+            {portalShifts.map((sh) => (
+              <div key={sh.id} className="inv-line">
+                <span>{sh.date}</span>
+                <span className="chip draft">{sh.shift}</span>
+              </div>
+            ))}
           </div>
         )}
 
