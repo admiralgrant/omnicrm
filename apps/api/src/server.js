@@ -224,6 +224,24 @@ app.get('/ai/draft', { preHandler: requireAuth }, async (req, reply) => {
   return { contact_id: c.id, draft };
 });
 
+app.get('/products', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare('SELECT * FROM products WHERE user_id = ? ORDER BY category, name').all(req.user.id);
+  const products = rows.map((p) => ({ ...p, low: p.stock <= p.low_stock_at, margin: p.unit_price > 0 ? Math.round(((p.unit_price - p.unit_cost) / p.unit_price) * 100) : 0 }));
+  const stock_value = products.reduce((s, p) => s + p.stock * p.unit_cost, 0);
+  const low_count = products.filter((p) => p.low).length;
+  return { products, stock_value, low_count, total: products.length };
+});
+
+app.get('/tickets', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`
+    SELECT t.*, c.company, c.name FROM tickets t
+    LEFT JOIN contacts c ON c.id = t.contact_id
+    WHERE t.user_id = ? ORDER BY CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, t.id DESC`).all(req.user.id);
+  const counts = { open: 0, pending: 0, closed: 0 };
+  for (const t of rows) counts[t.status] = (counts[t.status] || 0) + 1;
+  return { tickets: rows, counts };
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
 
