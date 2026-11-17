@@ -61,6 +61,7 @@ export default function App() {
     ['home', '🏠', 'Home'],
     ['customers', '👥', 'Customers'],
     ['followups', '📞', 'Follow-ups'],
+    ['ads', '📣', 'Ads Studio'],
   ];
 
   return (
@@ -76,8 +77,7 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view === 'home' && dash && (
-          <>
+        {view === 'home' && dash && (          <>
             <h1>Good morning 👋</h1>
             <div className="kpis">
               <div className="kpi"><div className="label">Contacts</div><div className="value">{dash.contacts}</div></div>
@@ -124,7 +124,30 @@ export default function App() {
             ))}
           </div>
         )}
+
+        {view === 'ads' && (
+          <div className="card ads-card">
+            <div className="ads-badge">COMING SOON</div>
+            <h3>📣 Ads Studio</h3>
+            <p className="muted">Run Meta & Google ads the easy way — the AI plans, builds and optimises while you watch the returns.</p>
+            <ul className="ads-list">
+              <li>✨ AI builds your ad copy, creative and audience — you just approve</li>
+              <li>💳 One naira budget, all-in — our fee is a simple % of your ad spend</li>
+              <li>📊 Live analytics: spend, clicks, leads and ROI on every naira</li>
+              <li>🤖 Weekly AI recommendations that shift budget to what sells</li>
+            </ul>
+            <button className="btn-primary" onClick={() => alert('Ads Studio is coming in the next build phase. You are first in line, Grant! 🚀')}>Join the waitlist</button>
+          </div>
+        )}
       </main>
+
+      <nav className="bottomnav">
+        {nav.map(([k, icon, label]) => (
+          <div key={k} className={`bn-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
+            <span>{icon}</span>{label}
+          </div>
+        ))}
+      </nav>
     </div>
   );
 }
