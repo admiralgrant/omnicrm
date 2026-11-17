@@ -123,6 +123,9 @@ export default function App() {
   }, [token]);
 
   const login = async (email, password) => {
+    if (sessionStorage.getItem('omnicrm_demo') && email !== 'guest@omnicrm.ng') {
+      throw new Error('This demo link is guest-only. Sign in with guest@omnicrm.ng / guest-demo — or open the app without the demo link to sign in as an admin.');
+    }
     const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     localStorage.setItem(tokenKey, d.token);
     setAuthMode('landing');
@@ -1710,7 +1713,7 @@ function Landing({ onLogin, onStart }) {
       </header>
 
       <section className="hero">
-        {localStorage.getItem('omnicrm_demo') && (
+        {sessionStorage.getItem('omnicrm_demo') && (
           <div className="demo-banner">
             👋 You're in a read-only guest demo — log in with <b>guest@omnicrm.ng</b> / <b>guest-demo</b> to explore. Changes are disabled.
           </div>
@@ -1816,7 +1819,7 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
         <p className="muted switch" onClick={() => onSwitch(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Log in'}
         </p>
-        <p className="muted demo">{localStorage.getItem('omnicrm_demo')
+        <p className="muted demo">{sessionStorage.getItem('omnicrm_demo')
           ? 'Guest demo: guest@omnicrm.ng / guest-demo (read-only)'
           : 'Demo: grant@besconpaints.com / omnicrm-demo'}</p>
       </div>
