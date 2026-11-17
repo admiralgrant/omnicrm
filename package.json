@@ -1,0 +1,11 @@
+{
+  "name": "omnicrm",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}
