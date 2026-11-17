@@ -39,6 +39,7 @@ export default function App() {
   const [activeInv, setActiveInv] = useState(null);
   const [invItems, setInvItems] = useState([]);
   const [newInv, setNewInv] = useState(null);
+  const [payLink, setPayLink] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -121,7 +122,7 @@ export default function App() {
 
   const openInvoice = async (i) => {
     const d = await api(`/invoices/${i.id}`);
-    setActiveInv(d.invoice); setInvItems(d.items); setInvView('detail');
+    setActiveInv(d.invoice); setInvItems(d.items); setPayLink(d.pay_link || ''); setInvView('detail');
   };
   const sendInvoice = async () => {
     await api(`/invoices/${activeInv.id}/send`, { method: 'POST' });
@@ -138,6 +139,18 @@ export default function App() {
   const newInvoice = () => {
     setInvView('new');
     setNewInv({ contact_id: '', due_date: '', items: [{ description: '', qty: 1, unit_price: '' }] });
+  };
+  const shareWhatsApp = () => {
+    const intl = String(activeInv.phone || '').replace(/^0/, '234');
+    const link = `${location.origin}${payLink}`;
+    const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ₦${Number(it.amount).toLocaleString()}`).join('\n');
+    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ₦${Number(activeInv.total).toLocaleString()} (incl. 7.5% VAT)\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
+    window.open(`https://wa.me/${intl}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+  const copyPayLink = () => {
+    const link = `${location.origin}${payLink}`;
+    navigator.clipboard.writeText(link);
+    alert(`Pay link copied:\n${link}`);
   };
   const saveInvoice = async () => {
     if (!newInv.contact_id || newInv.items.length === 0) return;
@@ -443,6 +456,12 @@ export default function App() {
                   {activeInv.status === 'draft' && <button className="btn-primary" onClick={sendInvoice}>Mark as sent</button>}
                   {(activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary" onClick={payInvoice}>Mark as paid ✓</button>}
                 </div>
+                {activeInv.status !== 'paid' && (
+                  <div className="quick-actions">
+                    <button className="btn-primary" onClick={shareWhatsApp}>💬 Send via WhatsApp</button>
+                    <button className="btn-ghost" onClick={copyPayLink}>🔗 Copy pay link</button>
+                  </div>
+                )}
               </>
             )}
           </div>
