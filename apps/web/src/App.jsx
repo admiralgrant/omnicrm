@@ -82,6 +82,7 @@ export default function App() {
   const [remit, setRemit] = useState(null);
   const [shifts, setShifts] = useState([]);
   const [portalShifts, setPortalShifts] = useState([]);
+  const [demoLinks, setDemoLinks] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -107,6 +108,7 @@ export default function App() {
         try { setAttendance((await api('/attendance')).attendance); } catch { /* non-HR */ }
         try { setRemit(await api('/remittances')); } catch { /* non-HR */ }
         try { setShifts((await api('/shifts')).shifts); } catch { /* non-HR */ }
+        try { setDemoLinks((await api('/demo-links')).links); } catch { /* owner-only */ }
         if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
@@ -1066,6 +1068,36 @@ export default function App() {
                     ))}
                   </>
                 )}
+                <h3 style={{ marginTop: 14 }}>🔗 Demo links (shareable, revocable)</h3>
+                <p className="muted">Create a link to share with anyone. Revoke it and it instantly stops working for them.</p>
+                <button className="btn-primary sm" onClick={async () => {
+                  const label = prompt('Label for this link? (e.g. "Investor pitch", "Kunle — Tue demo")') || '';
+                  const d = await api('/demo-links', { method: 'POST', body: JSON.stringify({ label }) });
+                  setDemoLinks((await api('/demo-links')).links);
+                  const full = `${location.origin}${d.url}`;
+                  navigator.clipboard.writeText(full);
+                  alert(`Demo link created and copied:\n${full}\n\nTell me "break <label>" any time to revoke it.`);
+                }}>+ Create demo link</button>
+                {demoLinks.length === 0 && <p className="muted" style={{ marginTop: 8 }}>No demo links yet.</p>}
+                {demoLinks.map((l) => (
+                  <div key={l.id} className="inv-line" style={{ marginTop: 6 }}>
+                    <span>{l.label || l.token}{l.active ? '' : ' (revoked)'} <span className="muted" style={{ fontSize: 11 }}>{l.token}</span></span>
+                    <span className="quick-actions" style={{ marginTop: 0 }}>
+                      {l.active ? (
+                        <>
+                          <button className="btn-ghost sm" onClick={() => { navigator.clipboard.writeText(`${location.origin}/demo.html?token=${l.token}`); alert('Link copied.'); }}>Copy</button>
+                          <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={async () => {
+                            if (!window.confirm(`Revoke this link? Anyone holding it loses access instantly.`)) return;
+                            await api(`/demo-links/${l.id}`, { method: 'DELETE' });
+                            setDemoLinks((await api('/demo-links')).links);
+                          }}>Revoke</button>
+                        </>
+                      ) : (
+                        <span className="chip low">revoked</span>
+                      )}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </>
