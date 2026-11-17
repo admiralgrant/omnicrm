@@ -73,6 +73,23 @@ app.post('/contacts', { preHandler: requireAuth }, async (req, reply) => {
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(info.lastInsertRowid) };
 });
 
+app.put('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Contact not found' });
+  const c = req.body || {};
+  db.prepare('UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, tags = ?, status = ?, debt_ngn = ?, deal_value_ngn = ? WHERE id = ? AND user_id = ?')
+    .run(c.name ?? existing.name, c.company ?? existing.company, c.phone ?? existing.phone, c.email ?? existing.email, c.tags ?? existing.tags, c.status ?? existing.status,
+      Number(c.debt_ngn ?? existing.debt_ngn), Number(c.deal_value_ngn ?? existing.deal_value_ngn), req.params.id, req.user.id);
+  return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id) };
+});
+
+app.delete('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Contact not found' });
+  db.prepare('DELETE FROM contacts WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  return { ok: true };
+});
+
 app.patch('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
   const c = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!c) return reply.code(404).send({ error: 'Contact not found' });
@@ -266,6 +283,30 @@ app.get('/tickets', { preHandler: requireAuth }, async (req) => {
   const counts = { open: 0, pending: 0, closed: 0 };
   for (const t of rows) counts[t.status] = (counts[t.status] || 0) + 1;
   return { tickets: rows, counts };
+});
+
+app.post('/tickets', { preHandler: requireAuth }, async (req, reply) => {
+  const { subject, status, priority, contact_id } = req.body || {};
+  if (!subject) return reply.code(400).send({ error: 'Ticket subject is required' });
+  const info = db.prepare('INSERT INTO tickets (user_id, contact_id, subject, status, priority) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id || null, subject, status || 'open', priority || 'medium');
+  return { ticket: db.prepare('SELECT * FROM tickets WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.put('/tickets/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM tickets WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Ticket not found' });
+  const { subject, status, priority, contact_id } = req.body || {};
+  db.prepare('UPDATE tickets SET subject = ?, status = ?, priority = ?, contact_id = ? WHERE id = ? AND user_id = ?')
+    .run(subject ?? existing.subject, status ?? existing.status, priority ?? existing.priority, contact_id ?? existing.contact_id, req.params.id, req.user.id);
+  return { ticket: db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id) };
+});
+
+app.delete('/tickets/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT id FROM tickets WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Ticket not found' });
+  db.prepare('DELETE FROM tickets WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  return { ok: true };
 });
 
 // ---- FX: live naira rates with fallback (never blocks invoicing) ----
