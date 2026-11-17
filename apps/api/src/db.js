@@ -213,6 +213,16 @@ CREATE TABLE IF NOT EXISTS shifts (
   UNIQUE(staff_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_shifts_user ON shifts(user_id, date);
+
+CREATE TABLE IF NOT EXISTS demo_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  token TEXT NOT NULL UNIQUE,
+  label TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT
+);
 CREATE TABLE IF NOT EXISTS invoices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
