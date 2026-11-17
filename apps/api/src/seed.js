@@ -47,6 +47,10 @@ for (const [title, value, stage, company] of [
 
 console.log(`Seeded demo data for ${email} / password: ${password}`);
 
+// read-only guest demo account (browse everything, change nothing)
+db.prepare("INSERT INTO users (name, email, password_hash, business_name, is_guest) VALUES (?, ?, ?, ?, 1) ON CONFLICT(email) DO NOTHING")
+  .run('Demo Guest', 'guest@omnicrm.ng', bcrypt.hashSync('guest-demo', 10), 'Demo Business');
+
 // ---- seed WhatsApp threads so the inbox feels alive ----
 const thread = (company, msgs) => {
   const c = db.prepare('SELECT id FROM contacts WHERE company = ? AND user_id = ?').get(company, uid);
