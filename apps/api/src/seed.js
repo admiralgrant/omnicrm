@@ -46,3 +46,39 @@ for (const [title, value, stage, company] of [
 }
 
 console.log(`Seeded demo data for ${email} / password: ${password}`);
+
+// ---- seed WhatsApp threads so the inbox feels alive ----
+const thread = (company, msgs) => {
+  const c = db.prepare('SELECT id FROM contacts WHERE company = ? AND user_id = ?').get(company, uid);
+  if (!c) return;
+  for (const [dir, body, read] of msgs) {
+    db.prepare('INSERT INTO messages (user_id, contact_id, direction, body, status, read) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(uid, c.id, dir, body, 'sent', read);
+  }
+};
+
+thread('GPFI', [
+  ['in', 'Good morning. We received your proposal from the procurement team.', 1],
+  ['out', 'Good morning! Thank you for confirming — happy to walk you through the tiers whenever you are ready.', 1],
+  ['in', 'Management will review this week and revert.', 0],
+]);
+
+thread('El-Sultan Facility Management', [
+  ['out', 'Hello Mr. El-Sultan, this is Grant from Bescon Paints. As requested, here is the FMPP proposal — free Silver tier with a N50,000 welcome bonus, 5–15% discounts, and referral commissions.', 1],
+  ['in', 'Thanks, we will look at it.', 0],
+]);
+
+thread('Eko Maintenance Limited', [
+  ['in', 'Kindly come to the office with the proposal. Ask for the Facilities Manager.', 0],
+]);
+
+thread('Alhaji Bello (Wholesaler)', [
+  ['out', 'Alhaji, good afternoon. The two invoices from last month are now due — kindly confirm when payment will be made.', 1],
+]);
+
+thread('Mama Nkechi Retail', [
+  ['in', 'I will pay by Friday, abeg.', 0],
+  ['out', 'No problem, Mama. Friday is fine. Thank you!', 1],
+]);
+
+console.log('Seeded WhatsApp inbox threads.');
