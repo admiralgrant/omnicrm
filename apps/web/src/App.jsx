@@ -15,7 +15,9 @@ async function api(path, options = {}) {
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
-  const [view, setView] = useState('home');
+  const [authMode, setAuthMode] = useState('landing'); // landing | login | register
+  const [view, setView] = useState('dashboard');
+  const [dept, setDept] = useState('sales');
   const [dash, setDash] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [followups, setFollowups] = useState([]);
@@ -24,16 +26,24 @@ export default function App() {
   const [msgs, setMsgs] = useState([]);
   const [draft, setDraft] = useState('');
   const [composer, setComposer] = useState('');
+  const [products, setProducts] = useState([]);
+  const [stockValue, setStockValue] = useState(0);
+  const [lowCount, setLowCount] = useState(0);
+  const [tickets, setTickets] = useState([]);
+  const [ticketCounts, setTicketCounts] = useState({ open: 0, pending: 0, closed: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
     (async () => {
       try {
-        const [d, c, f, t] = await Promise.all([
+        const [d, c, f, t, p, tk] = await Promise.all([
           api('/dashboard'), api('/contacts'), api('/ai/followups'), api('/inbox'),
+          api('/products'), api('/tickets'),
         ]);
         setDash(d.kpis); setContacts(c.contacts); setFollowups(f.followups); setThreads(t.threads);
+        setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
+        setTickets(tk.tickets); setTicketCounts(tk.counts);
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -47,20 +57,35 @@ export default function App() {
   const login = async (email, password) => {
     const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     localStorage.setItem(tokenKey, d.token);
+    setAuthMode('landing');
+    setView('dashboard');
     setToken(d.token);
   };
   const register = async (email, password, name, business_name) => {
     const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, business_name }) });
     localStorage.setItem(tokenKey, d.token);
+    setAuthMode('landing');
+    setView('dashboard');
     setToken(d.token);
   };
-  const logout = () => { localStorage.removeItem(tokenKey); setToken(null); setDash(null); setContacts([]); };
+  const logout = () => { localStorage.removeItem(tokenKey); setToken(null); setAuthMode('landing'); setDash(null); setContacts([]); };
 
   const fmt = (n) => '₦' + Number(n).toLocaleString();
 
   if (loading) return <div className="center">Loading…</div>;
 
-  if (!token) return <Login onLogin={login} onRegister={register} />;
+  if (!token) {
+    if (authMode === 'landing') return <Landing onLogin={() => setAuthMode('login')} onStart={() => setAuthMode('register')} />;
+    return (
+      <Login
+        mode={authMode}
+        onSwitch={(m) => setAuthMode(m)}
+        onBack={() => setAuthMode('landing')}
+        onLogin={login}
+        onRegister={register}
+      />
+    );
+  }
 
   const openThread = async (t) => {
     setActiveContact(t);
@@ -86,11 +111,18 @@ export default function App() {
   const backToThreads = () => { setActiveContact(null); setMsgs([]); setDraft(''); };
 
   const nav = [
-    ['home', '🏠', 'Home'],
+    ['dashboard', '🏠', 'Dashboard'],
     ['customers', '👥', 'Customers'],
     ['inbox', '💬', 'Inbox'],
     ['followups', '📞', 'Follow-ups'],
     ['ads', '📣', 'Ads Studio'],
+  ];
+
+  const depts = [
+    ['sales', '📈 Sales'],
+    ['support', '🛟 Support'],
+    ['inventory', '📦 Inventory'],
+    ['product', '🏷️ Product'],
   ];
 
   return (
@@ -106,21 +138,95 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view === 'home' && dash && (          <>
+        {view === 'dashboard' && dash && (
+          <>
             <h1>Good morning 👋</h1>
-            <div className="kpis">
-              <div className="kpi"><div className="label">Contacts</div><div className="value">{dash.contacts}</div></div>
-              <div className="kpi"><div className="label">Outstanding debts</div><div className="value">{fmt(dash.debtors)}</div><div className="sub">{dash.debtor_count} debtors</div></div>
-              <div className="kpi"><div className="label">Pipeline</div><div className="value">{fmt(dash.pipeline_value_ngn)}</div></div>
-              <div className="kpi"><div className="label">Follow-ups due today</div><div className="value">{dash.followups_due_today}</div></div>
+            <div className="dept-pills">
+              {depts.map(([k, label]) => (
+                <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
+              ))}
             </div>
-            {followups.length > 0 && (
+
+            {dept === 'sales' && (
+              <>
+                <div className="kpis">
+                  <div className="kpi"><div className="label">Contacts</div><div className="value">{dash.contacts}</div></div>
+                  <div className="kpi"><div className="label">Outstanding debts</div><div className="value">{fmt(dash.debtors)}</div><div className="sub">{dash.debtor_count} debtors</div></div>
+                  <div className="kpi"><div className="label">Pipeline</div><div className="value">{fmt(dash.pipeline_value_ngn)}</div></div>
+                  <div className="kpi"><div className="label">Follow-ups due today</div><div className="value">{dash.followups_due_today}</div></div>
+                </div>
+                {followups.length > 0 && (
+                  <div className="card">
+                    <h3>✦ AI Follow-ups ready</h3>
+                    {followups.map((f) => (
+                      <div key={f.contact_id} className="followup">
+                        <b>{f.company || f.name}</b>
+                        <p>{f.draft}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={() => setView('customers')}>Open Customer Book →</button>
+                  <button className="btn-ghost" onClick={() => setView('inbox')}>Open WhatsApp Inbox →</button>
+                </div>
+              </>
+            )}
+
+            {dept === 'support' && (
+              <>
+                <div className="kpis">
+                  <div className="kpi"><div className="label">Open tickets</div><div className="value">{ticketCounts.open || 0}</div></div>
+                  <div className="kpi"><div className="label">Pending</div><div className="value">{ticketCounts.pending || 0}</div></div>
+                  <div className="kpi"><div className="label">Closed</div><div className="value">{ticketCounts.closed || 0}</div></div>
+                  <div className="kpi"><div className="label">Inbox unread</div><div className="value">{threads.reduce((s, t) => s + (t.unread || 0), 0)}</div></div>
+                </div>
+                <div className="card">
+                  <h3>🛟 Support Tickets</h3>
+                  {tickets.map((t) => (
+                    <div key={t.id} className="ticket">
+                      <div className="ticket-info">
+                        <b>{t.subject}</b>
+                        <span>{t.company || t.name || 'General'} · {t.created_at}</span>
+                      </div>
+                      <span className={`chip ${t.status}`}>{t.status}</span>
+                      <span className={`chip pri-${t.priority}`}>{t.priority}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {dept === 'inventory' && (
+              <>
+                <div className="kpis">
+                  <div className="kpi"><div className="label">Stock value (cost)</div><div className="value">{fmt(stockValue)}</div></div>
+                  <div className="kpi"><div className="label">Low-stock alerts</div><div className="value">{lowCount}</div></div>
+                  <div className="kpi"><div className="label">SKUs tracked</div><div className="value">{products.length}</div></div>
+                </div>
+                <div className="card">
+                  <h3>⚠️ Low Stock</h3>
+                  {products.filter((p) => p.low).map((p) => (
+                    <div key={p.id} className="ticket">
+                      <div className="ticket-info"><b>{p.name}</b><span>{p.sku} · {p.category}</span></div>
+                      <span className="chip low">{p.stock} left</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {dept === 'product' && (
               <div className="card">
-                <h3>✦ AI Follow-ups ready</h3>
-                {followups.map((f) => (
-                  <div key={f.contact_id} className="followup">
-                    <b>{f.company || f.name}</b>
-                    <p>{f.draft}</p>
+                <h3>🏷️ Product Catalog</h3>
+                {products.map((p) => (
+                  <div key={p.id} className="prod">
+                    <div className="ticket-info"><b>{p.name}</b><span>{p.sku} · {p.category}</span></div>
+                    <div className="prod-meta">
+                      <div><span className="muted">Stock</span> {p.stock}</div>
+                      <div><span className="muted">Price</span> {fmt(p.unit_price)}</div>
+                      <div><span className="muted">Margin</span> {p.margin}%</div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -235,8 +341,100 @@ export default function App() {
   );
 }
 
-function Login({ onLogin, onRegister }) {
-  const [mode, setMode] = useState('login');
+function Landing({ onLogin, onStart }) {
+  const features = [
+    ['📈', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
+    ['💬', 'WhatsApp AI Inbox', 'One inbox for every customer chat — the AI drafts, you approve and send.'],
+    ['📦', 'Inventory', 'Stock levels, low-stock alerts and stock value, updated in real time.'],
+    ['🧾', 'Invoicing', 'Send invoices from your phone, track payments, chase debtors politely.'],
+    ['📣', 'Ads Studio', 'AI-run Meta & Google ads with live ROI analytics — pay only a % of ad spend.'],
+    ['🛟', 'Support Desk', 'Every complaint becomes a ticket with priority, SLA and history.'],
+  ];
+  const cats = [
+    ['🏪', 'Nano & Micro', 'Corner shops, side hustles — digital tools at naira prices, nothing to learn.'],
+    ['🛒', 'Small Business', 'Retailers, salons, pharmacies — run sales, stock and WhatsApp in one app.'],
+    ['🏢', 'Medium & Enterprise', 'Facility managers, distributors, franchises — dashboards for every department.'],
+  ];
+  const tiers = [
+    ['Starter', '₦0', 'forever', ['Up to 100 contacts', 'WhatsApp inbox', '5 AI follow-ups / day', 'Community support'], 'Start free'],
+    ['Growth', '₦9,900', '/month', ['Everything in Starter', 'Unlimited contacts', 'AI drafts + invoicing', 'Inventory & support desk'], 'Start free trial'],
+    ['Pro', '₦24,900', '/month', ['Everything in Growth', 'Ads Studio (10% of spend)', 'Multi-user & departments', 'Priority support'], 'Start free trial'],
+    ['Enterprise', 'Custom', 'tailored', ['Unlimited everything', 'Dedicated analyst', 'API access & SSO', 'SLA & onboarding'], 'Talk to us'],
+  ];
+  return (
+    <div className="landing">
+      <header className="landing-nav">
+        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <nav className="landing-links">
+          <a href="#features">Features</a>
+          <a href="#categories">Who it's for</a>
+          <a href="#pricing">Pricing</a>
+        </nav>
+        <button className="btn-ghost" onClick={onLogin}>Log in</button>
+      </header>
+
+      <section className="hero">
+        <h1>Every business tool your company needs.<br />One app. One naira at a time.</h1>
+        <p className="hero-sub">OmniCRM digitalises how nano, micro, small and enterprise businesses sell, support, stock and advertise — with AI doing the heavy lifting.</p>
+        <div className="hero-cta">
+          <button className="btn-primary big" onClick={onStart}>Start free</button>
+          <a className="btn-ghost big" href="#pricing">See pricing</a>
+        </div>
+      </section>
+
+      <section id="features" className="landing-section">
+        <h2>Everything large retailers have — for everyone else</h2>
+        <div className="feat-grid">
+          {features.map(([icon, title, desc]) => (
+            <div key={title} className="feat">
+              <div className="feat-icon">{icon}</div>
+              <b>{title}</b>
+              <p>{desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="categories" className="landing-section alt">
+        <h2>Built for every size of business</h2>
+        <div className="cat-grid">
+          {cats.map(([icon, title, desc]) => (
+            <div key={title} className="feat">
+              <div className="feat-icon">{icon}</div>
+              <b>{title}</b>
+              <p>{desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="pricing" className="landing-section">
+        <h2>Simple pricing, honest money</h2>
+        <div className="price-grid">
+          {tiers.map(([name, price, per, perks, cta]) => (
+            <div key={name} className="price-card">
+              <b className="price-name">{name}</b>
+              <div className="price-amt">{price}<span>{per}</span></div>
+              <ul>
+                {perks.map((p) => <li key={p}>✓ {p}</li>)}
+              </ul>
+              <button className={name === 'Pro' ? 'btn-primary' : 'btn-ghost'} onClick={onStart}>{cta}</button>
+            </div>
+          ))}
+        </div>
+        <p className="muted pricing-note">Ads Studio: no fixed fee — you pay a simple percentage of ad spend, and every campaign reports its ROI.</p>
+      </section>
+
+      <footer className="landing-footer">
+        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <p className="muted">Made for Nigerian businesses · Lagos, Nigeria</p>
+        <p className="muted">© 2026 OmniCRM</p>
+      </footer>
+    </div>
+  );
+}
+
+function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -253,6 +451,7 @@ function Login({ onLogin, onRegister }) {
   return (
     <div className="center login">
       <div className="card login-card">
+        <button className="btn-ghost back" onClick={onBack}>← Back</button>
         <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
         <h3>{mode === 'login' ? 'Welcome back' : 'Create your business'}</h3>
         <form onSubmit={submit}>
@@ -267,7 +466,7 @@ function Login({ onLogin, onRegister }) {
           {err && <p className="err">{err}</p>}
           <button className="btn-primary" type="submit">{mode === 'login' ? 'Log in' : 'Create account'}</button>
         </form>
-        <p className="muted switch" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+        <p className="muted switch" onClick={() => onSwitch(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Log in'}
         </p>
         <p className="muted demo">Demo: grant@besconpaints.com / omnicrm-demo</p>
