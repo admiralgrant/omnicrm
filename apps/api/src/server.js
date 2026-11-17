@@ -71,8 +71,26 @@ app.post('/auth/login', async (req, reply) => {
     const token = jwt.sign({ id: staff.user_id, email: staff.email, dept: staff.department, staff_id: staff.id, name: staff.name }, JWT_SECRET, { expiresIn: '7d' });
     return { token, user: { id: staff.user_id, email: staff.email, name: staff.name, dept: staff.department, staff: true, business_name: null } };
   }
-  const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
-  return { token, user: { id: user.id, email: user.email, name: user.name, business_name: user.business_name } };
+  const token = jwt.sign({ id: user.id, email: user.email, name: user.name, guest: !!user.is_guest }, JWT_SECRET, { expiresIn: '7d' });
+  return { token, user: { id: user.id, email: user.email, name: user.name, business_name: user.business_name, guest: !!user.is_guest } };
+});
+
+// ---- read-only guard for guest sessions: browse anything, mutate nothing ----
+app.addHook('onRequest', async (req, reply) => {
+  if (req.method === 'GET' || req.method === 'OPTIONS' || req.method === 'HEAD') return;
+  const allowlist = ['/auth/login', '/auth/register'];
+  if (allowlist.includes(req.url.split('?')[0])) return;
+  if (req.url.split('?')[0].startsWith('/pay/')) return;
+  if (req.url.split('?')[0].startsWith('/webhooks/')) return;
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  if (!token) return;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.guest) {
+      return reply.code(403).send({ error: 'Read-only guest session — changes are disabled in this demo.' });
+    }
+  } catch { /* unauthenticated mutations are handled by route guards */ }
 });
 
 // ---- contacts ----
