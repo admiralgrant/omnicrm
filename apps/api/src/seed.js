@@ -118,8 +118,10 @@ const inv = (company, number, status, issue, due, items, currency = 'NGN', fxRat
   const subtotal = items.reduce((s, [d, q, up]) => s + q * up, 0);
   const tax = Math.round(subtotal * 0.075);
   const total = subtotal + tax;
-  db.prepare('INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, tax_rate, tax, total, currency, fx_rate, ngn_total) VALUES (?, ?, ?, ?, ?, ?, ?, 7.5, ?, ?, ?, ?, ?)')
-    .run(uid, c.id, number, status, issue, due, subtotal, tax, total, currency, fxRate, Math.round(total * fxRate));
+  const feeRate = currency === 'NGN' ? 0 : 0.015; // conversion processing fee
+  const fee = Math.round(total * feeRate);
+  db.prepare('INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, tax_rate, tax, total, currency, fx_rate, ngn_total, fee_rate, fee) VALUES (?, ?, ?, ?, ?, ?, ?, 7.5, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uid, c.id, number, status, issue, due, subtotal, tax, total, currency, fxRate, Math.round((total + fee) * fxRate), feeRate, fee);
   const invId = db.prepare('SELECT id FROM invoices WHERE number = ?').get(number).id;
   for (const [d, q, up] of items) {
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
