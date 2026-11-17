@@ -254,6 +254,16 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items ON invoice_items(invoice_id);
 const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
 if (!userCols.includes('is_guest')) db.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0');
 
+// migration: commission engine — contact sales rep, staff rate, payslip line
+const contactCols = db.prepare("PRAGMA table_info(contacts)").all().map((c) => c.name);
+if (!contactCols.includes('staff_id')) db.exec('ALTER TABLE contacts ADD COLUMN staff_id INTEGER');
+const staffCols = db.prepare("PRAGMA table_info(staff)").all().map((c) => c.name);
+if (!staffCols.includes('commission_rate')) db.exec('ALTER TABLE staff ADD COLUMN commission_rate REAL NOT NULL DEFAULT 0');
+const slipCols = db.prepare("PRAGMA table_info(payslips)").all().map((c) => c.name);
+if (!slipCols.includes('commission')) db.exec('ALTER TABLE payslips ADD COLUMN commission REAL NOT NULL DEFAULT 0');
+const runCols = db.prepare("PRAGMA table_info(payroll_runs)").all().map((c) => c.name);
+if (!runCols.includes('total_commission')) db.exec('ALTER TABLE payroll_runs ADD COLUMN total_commission REAL NOT NULL DEFAULT 0');
+
 // migration: pay_token for public pay links
 import { randomUUID } from 'node:crypto';
 const invCols = db.prepare("PRAGMA table_info(invoices)").all().map((c) => c.name);
