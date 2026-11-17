@@ -128,6 +128,18 @@ input { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; 
 .pricing-note { text-align: center; margin-top: 22px; }
 .landing-footer { border-top: 1px solid var(--line); padding: 30px 5%; display: flex; flex-direction: column; align-items: center; gap: 8px; background: #fff; }
 .back { margin-bottom: 10px; }
+.inv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.inv-amt { font-weight: 800; font-size: 13.5px; flex-shrink: 0; }
+.inv-label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin: 12px 0 5px; }
+.inv-item-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.inv-item-row input:first-child { flex: 1; min-width: 120px; }
+.inv-items { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+.inv-line { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13.5px; }
+.inv-line.total { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 12px; font-weight: 800; font-size: 15px; }
+.chip.sent { background: #e8f1fd; color: #2471a3; }
+.chip.overdue { background: #fdecec; color: #c0392b; }
+.chip.draft { background: #eceff0; color: #5d6d66; }
+select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-family: inherit; font-size: 14px; background: #fff; margin-bottom: 4px; }
 .mobile-topbar { display: none; }
 @media (max-width: 760px) {
   .sidebar { display: none; }
