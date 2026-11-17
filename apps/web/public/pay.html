@@ -63,7 +63,8 @@
           ${rows}
           <div class="row"><span>Subtotal</span><span>${fmtCur(invoice.subtotal, cur)}</span></div>
           <div class="row"><span>VAT (7.5%)</span><span>${fmtCur(invoice.tax, cur)}</span></div>
-          <div class="row totals"><span>Total</span><span>${fmtCur(invoice.total, cur)}</span></div>
+          ${invoice.fee > 0 ? `<div class="row"><span>Processing fee (${(invoice.fee_rate * 100).toFixed(1)}%)</span><span>${fmtCur(invoice.fee, cur)}</span></div>` : ''}
+          <div class="row totals"><span>Total</span><span>${fmtCur(invoice.total + (invoice.fee || 0), cur)}</span></div>
           ${action}
           <p class="ok" id="msg"></p>`;
       } catch (e) {
