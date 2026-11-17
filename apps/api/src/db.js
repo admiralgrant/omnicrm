@@ -152,6 +152,44 @@ CREATE TABLE IF NOT EXISTS org_settings (
   value TEXT NOT NULL,
   UNIQUE(user_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS payroll_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  period TEXT NOT NULL,               -- YYYY-MM
+  status TEXT NOT NULL DEFAULT 'draft', -- draft | approved | paid
+  total_gross REAL NOT NULL DEFAULT 0,
+  total_pension REAL NOT NULL DEFAULT 0,
+  total_paye REAL NOT NULL DEFAULT 0,
+  total_net REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_payroll_user ON payroll_runs(user_id);
+
+CREATE TABLE IF NOT EXISTS payslips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  run_id INTEGER NOT NULL REFERENCES payroll_runs(id),
+  staff_id INTEGER NOT NULL REFERENCES staff(id),
+  gross REAL NOT NULL,
+  pension REAL NOT NULL,              -- staff 8% contribution
+  paye REAL NOT NULL,                 -- simplified PAYE tax
+  other_deductions REAL NOT NULL DEFAULT 0,
+  net REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft'
+);
+CREATE INDEX IF NOT EXISTS idx_payslips_run ON payslips(run_id);
+
+CREATE TABLE IF NOT EXISTS attendance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  staff_id INTEGER NOT NULL REFERENCES staff(id),
+  date TEXT NOT NULL DEFAULT (date('now')),
+  clock_in TEXT,
+  clock_out TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_user ON attendance(user_id, date);
 CREATE TABLE IF NOT EXISTS invoices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
