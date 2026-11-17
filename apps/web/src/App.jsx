@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 
 const API = '/api';
 const tokenKey = 'omnicrm_token';
+// A demo-link tab must always boot clean: never carry an old session into guest mode.
+if (typeof window !== 'undefined' && sessionStorage.getItem('omnicrm_demo') && localStorage.getItem(tokenKey)) {
+  localStorage.removeItem(tokenKey);
+}
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
