@@ -208,10 +208,24 @@ app.get('/messages', { preHandler: requireAuth }, async (req, reply) => {
 app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
   const { contact_id, body } = req.body || {};
   if (!contact_id || !body) return reply.code(400).send({ error: 'contact_id and body are required' });
-  const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  const contact = db.prepare('SELECT id, phone FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
+  let status = 'sent';
+  // Real WhatsApp delivery when the Cloud API is configured; otherwise stored as sent (simulation).
+  if (waEnabled() && contact.phone) {
+    const to = '234' + String(contact.phone).replace(/^0/, '').replace(/\D/g, '');
+    try {
+      const res = await fetch(`https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body } }),
+      });
+      const data = await res.json();
+      status = data.messages?.length ? 'sent' : 'failed';
+    } catch { status = 'failed'; }
+  }
   const info = db.prepare('INSERT INTO messages (user_id, contact_id, direction, body, status) VALUES (?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, 'out', body, 'sent');
+    .run(req.user.id, contact_id, 'out', body, status);
   db.prepare('INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, ?, ?, ?)')
     .run(req.user.id, contact_id, 'whatsapp', 'whatsapp', body);
   db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(contact_id, req.user.id);
@@ -361,6 +375,36 @@ app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
   return { invoice: { ...inv, status: invStatus(inv) }, items, pay_link: `/pay.html?token=${inv.pay_token}` };
+});
+
+// edit a draft invoice: due date, currency, or full line-item replacement (totals recomputed)
+app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  if (inv.status !== 'draft') return reply.code(400).send({ error: 'Only draft invoices can be edited. Void/re-issue after sending.' });
+  const { due_date, items, currency } = req.body || {};
+  const cur = (currency || inv.currency || 'NGN').toUpperCase();
+  if (!FX_CURRENCIES.includes(cur)) return reply.code(400).send({ error: `Unsupported currency: ${cur}` });
+  let newItems = inv.items;
+  if (Array.isArray(items) && items.length > 0) {
+    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(inv.id);
+    for (const it of items) {
+      const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
+      db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
+        .run(inv.id, it.description || 'Item', qty, up, qty * up);
+    }
+  }
+  const currentItems = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
+  const subtotal = currentItems.reduce((s, it) => s + it.amount, 0);
+  const tax = Math.round(subtotal * 0.075);
+  const total = subtotal + tax;
+  const fx = await fxRates();
+  const rate = cur === 'NGN' ? 1 : (inv.currency === cur && inv.fx_rate ? inv.fx_rate : (fx.rates[cur] || FX_FALLBACK[cur]));
+  const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE;
+  const fee = Math.round(total * feeRate);
+  db.prepare('UPDATE invoices SET due_date = ?, currency = ?, fx_rate = ?, fee_rate = ?, fee = ?, subtotal = ?, tax = ?, total = ?, ngn_total = ? WHERE id = ? AND user_id = ?')
+    .run(due_date || inv.due_date, cur, rate, feeRate, fee, subtotal, tax, total, Math.round((total + fee) * rate), inv.id, req.user.id);
+  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
 });
 
 app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
@@ -569,6 +613,177 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
     .text('Thank you for your business.', { align: 'center' });
 
   doc.end();
+});
+
+// ---- feedback (conversation/call notes) ----
+app.get('/feedback', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`
+    SELECT f.*, c.company, c.name FROM feedback f
+    LEFT JOIN contacts c ON c.id = f.contact_id
+    WHERE f.user_id = ? ORDER BY f.id DESC LIMIT 100`).all(req.user.id);
+  return { feedback: rows };
+});
+
+app.post('/feedback', { preHandler: requireAuth }, async (req, reply) => {
+  const { contact_id, body } = req.body || {};
+  if (!body) return reply.code(400).send({ error: 'Feedback text is required' });
+  const info = db.prepare('INSERT INTO feedback (user_id, contact_id, body) VALUES (?, ?, ?)')
+    .run(req.user.id, contact_id || null, body);
+  db.prepare('INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id || null, 'feedback', 'manual', body);
+  return { feedback: db.prepare('SELECT * FROM feedback WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.delete('/feedback/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT id FROM feedback WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Feedback not found' });
+  db.prepare('DELETE FROM feedback WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  return { ok: true };
+});
+
+// ---- sales pipeline stages ----
+app.get('/pipeline', { preHandler: requireAuth }, async (req) => {
+  const stages = ['lead', 'contacted', 'qualified', 'proposal_sent', 'negotiation', 'won', 'lost'];
+  const rows = db.prepare('SELECT * FROM contacts WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
+  const out = stages.map((s) => ({
+    stage: s,
+    contacts: rows.filter((c) => c.status === s),
+    count: rows.filter((c) => c.status === s).length,
+    value: rows.filter((c) => c.status === s).reduce((sum, c) => sum + (c.deal_value_ngn || 0), 0),
+  }));
+  return { stages: out, total: rows.length, pipeline_value: rows.reduce((s, c) => s + (c.deal_value_ngn || 0), 0) };
+});
+
+// ---- AI reporting engine (rule-based; compiled on prompt) ----
+app.get('/ai/report', { preHandler: requireAuth }, async (req, reply) => {
+  const { period, scope } = req.query || {};
+  const days = { daily: 1, weekly: 7, monthly: 30, quarterly: 90 }[period] || 1;
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  const uid = req.user.id;
+  const q = (sql, ...p) => db.prepare(sql).all(...p);
+  const scopes = scope ? [scope] : ['sales', 'support', 'inventory', 'account'];
+  const sections = [];
+  for (const s of scopes) {
+    if (s === 'sales') {
+      const activities = q('SELECT * FROM activities WHERE user_id = ? AND created_at >= ? ORDER BY id DESC', uid, since);
+      const invs = q('SELECT * FROM invoices WHERE user_id = ? AND created_at >= ?', uid, since);
+      const fbs = q('SELECT * FROM feedback WHERE user_id = ? AND created_at >= ?', uid, since);
+      const pipe = q('SELECT status, COUNT(*) AS c, SUM(deal_value_ngn) AS v FROM contacts WHERE user_id = ? GROUP BY status', uid);
+      const followups = q('SELECT COUNT(*) AS c FROM contacts WHERE user_id = ? AND next_followup_date IS NOT NULL AND next_followup_date <= ?', uid, new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)).map(r => r.c)[0] || 0;
+      sections.push({
+        scope: 'sales',
+        title: '📈 Sales',
+        summary: [
+          `${activities.length} activities logged`,
+          `${invs.length} invoices (${invs.filter((i) => i.status === 'paid').length} paid, ${invs.filter((i) => i.status === 'sent' || i.status === 'overdue').length} outstanding)`,
+          `${fbs.length} conversation feedback notes`,
+          `Pipeline: ${pipe.map((p) => `${p.status.replace('_', ' ')} ${p.c}`).join(' · ')}`,
+          `${followups} follow-ups due in the next 7 days`,
+        ],
+        rows: activities.map((a) => ({ body: a.body, at: a.created_at })).slice(0, 10),
+      });
+    } else if (s === 'support') {
+      const tkts = q('SELECT * FROM tickets WHERE user_id = ? AND created_at >= ?', uid, since);
+      const msgs = q('SELECT * FROM messages WHERE user_id = ? AND created_at >= ?', uid, since);
+      const counts = { open: tkts.filter((t) => t.status === 'open').length, pending: tkts.filter((t) => t.status === 'pending').length, closed: tkts.filter((t) => t.status === 'closed').length };
+      sections.push({
+        scope: 'support',
+        title: '🛟 Support',
+        summary: [
+          `${tkts.length} tickets (${counts.open} open, ${counts.pending} pending, ${counts.closed} closed)`,
+          `${msgs.length} WhatsApp messages (${msgs.filter((m) => m.direction === 'in').length} in, ${msgs.filter((m) => m.direction === 'out').length} out)`,
+        ],
+        rows: tkts.map((t) => ({ body: `${t.priority}: ${t.subject}`, status: t.status })).slice(0, 10),
+      });
+    } else if (s === 'inventory') {
+      const prods = q('SELECT * FROM products WHERE user_id = ?', uid);
+      const low = prods.filter((p) => p.stock <= p.low_stock_at);
+      const stockValue = prods.reduce((sum, p) => sum + p.stock * p.unit_cost, 0);
+      sections.push({
+        scope: 'inventory',
+        title: '📦 Inventory',
+        summary: [
+          `${prods.length} SKUs tracked · stock value ₦${Number(stockValue).toLocaleString()} (cost)`,
+          `${low.length} low-stock items needing reorder`,
+        ],
+        rows: low.map((p) => ({ body: `${p.name} — ${p.stock} left (alert at ${p.low_stock_at})`, status: 'low' })).slice(0, 10),
+      });
+    } else if (s === 'account') {
+      const invsAll = q('SELECT * FROM invoices WHERE user_id = ?', uid);
+      const fees = invsAll.filter((i) => i.status === 'paid' && i.fee > 0).reduce((sum, i) => sum + i.fee, 0);
+      const feesNgn = invsAll.filter((i) => i.status === 'paid' && i.fee > 0).reduce((sum, i) => sum + (i.fee > 0 ? (i.ngn_total || i.total) * (i.fee / (i.total + i.fee)) : 0), 0);
+      const receivables = invsAll.filter((i) => i.status === 'sent' || i.status === 'overdue').reduce((s, i) => s + (i.ngn_total || i.total), 0);
+      sections.push({
+        scope: 'account',
+        title: '👤 Account & Billing',
+        summary: [
+          `Conversion fees earned (paid invoices): ₦${Number(feesNgn).toLocaleString()}`,
+          `Receivables outstanding: ₦${Number(receivables).toLocaleString()}`,
+          `Paystack: ${paystackEnabled() ? 'live' : 'demo mode'} · WhatsApp Cloud API: ${waEnabled() ? 'connected' : 'not connected'} · FX: ${FX_CACHE.source === 'live' ? 'live rates' : 'fallback rates'}`,
+        ],
+        rows: invsAll.filter((i) => i.status === 'paid').slice(0, 10).map((i) => ({ body: `${i.number} paid — ${i.currency} ${Number(i.total).toLocaleString()}`, status: i.currency })),
+      });
+    }
+  }
+  return { period, scope: scope || 'all', generated_at: new Date().toISOString(), since, sections };
+});
+
+// ---- account section ----
+app.get('/account', { preHandler: requireAuth }, async (req) => {
+  const u = db.prepare('SELECT id, name, email, business_name, created_at FROM users WHERE id = ?').get(req.user.id);
+  const invs = db.prepare('SELECT * FROM invoices WHERE user_id = ?').all(req.user.id);
+  const feesEarned = invs.filter((i) => i.status === 'paid' && i.fee > 0)
+    .reduce((s, i) => s + (i.ngn_total || i.total) * (i.fee / (i.total + i.fee)), 0);
+  const receivables = invs.filter((i) => i.status === 'sent' || i.status === 'overdue').reduce((s, i) => s + (i.ngn_total || i.total), 0);
+  const paidTotal = invs.filter((i) => i.status === 'paid').reduce((s, i) => s + (i.ngn_total || i.total), 0);
+  return {
+    user: { name: u.name, email: u.email, business_name: u.business_name, member_since: u.created_at },
+    plan: 'Starter (free)',
+    billing: {
+      fees_earned_ngn: Math.round(feesEarned),
+      receivables_ngn: Math.round(receivables),
+      paid_total_ngn: Math.round(paidTotal),
+      invoices_count: invs.length,
+      foreign_invoices: invs.filter((i) => i.currency !== 'NGN').length,
+    },
+    integrations: {
+      paystack: paystackEnabled(),
+      whatsapp_cloud_api: waEnabled(),
+      fx_source: FX_CACHE.source === 'live' ? 'live' : 'fallback',
+      currency_fee_rate: FX_FEE_RATE,
+    },
+  };
+});
+
+// ---- WhatsApp Cloud API (inbound webhook + real outbound send when configured) ----
+const WA_TOKEN = process.env.WHATSAPP_TOKEN || '';
+const WA_PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+const WA_VERIFY = process.env.WHATSAPP_VERIFY_TOKEN || '';
+const waEnabled = () => !!(WA_TOKEN && WA_PHONE_ID && WA_VERIFY);
+
+app.get('/webhooks/whatsapp', async (req, reply) => {
+  const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = req.query || {};
+  if (WA_VERIFY && mode === 'subscribe' && token === WA_VERIFY) return reply.type('text/plain').send(String(challenge));
+  return reply.code(403).send('Verification failed');
+});
+
+app.post('/webhooks/whatsapp', async (req, reply) => {
+  if (!waEnabled()) return reply.code(503).send({ error: 'WhatsApp Cloud API not configured' });
+  for (const e of req.body?.entry || []) {
+    for (const ch of e.changes || []) {
+      const msg = ch.value?.messages?.[0];
+      const from = ch.value?.contacts?.[0];
+      if (!msg || msg.type !== 'text') continue;
+      const sender = String(from?.wa_id || '');
+      const contact = db.prepare("SELECT id FROM contacts WHERE REPLACE(REPLACE(REPLACE(phone, ' ', ''), '+', ''), '-', '') LIKE ? ORDER BY id LIMIT 1")
+        .get(`%${sender}%`);
+      if (contact) {
+        db.prepare("INSERT INTO messages (user_id, contact_id, direction, body, status, read) VALUES (1, ?, 'in', ?, 'received', 0)")
+          .run(contact.id, msg.text?.body || '');
+      }
+    }
+  }
+  return { ok: true };
 });
 
 // ---- health ----
