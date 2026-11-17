@@ -242,6 +242,74 @@ app.get('/tickets', { preHandler: requireAuth }, async (req) => {
   return { tickets: rows, counts };
 });
 
+// ---- invoicing ----
+const invStatus = (inv) => (inv.status === 'sent' && inv.due_date < new Date().toISOString().slice(0, 10) ? 'overdue' : inv.status);
+
+app.get('/invoices', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`
+    SELECT i.*, c.company, c.name FROM invoices i
+    JOIN contacts c ON c.id = i.contact_id
+    WHERE i.user_id = ? ORDER BY i.id DESC`).all(req.user.id);
+  const invoices = rows.map((i) => ({ ...i, status: invStatus(i) }));
+  const counts = { draft: 0, sent: 0, paid: 0, overdue: 0 };
+  let receivables = 0;
+  for (const i of invoices) {
+    counts[i.status] = (counts[i.status] || 0) + 1;
+    if (i.status === 'sent' || i.status === 'overdue') receivables += i.total;
+  }
+  return { invoices, counts, receivables };
+});
+
+app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone FROM invoices i JOIN contacts c ON c.id = i.contact_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
+  return { invoice: { ...inv, status: invStatus(inv) }, items };
+});
+
+app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
+  const { contact_id, due_date, items } = req.body || {};
+  if (!contact_id || !Array.isArray(items) || items.length === 0) return reply.code(400).send({ error: 'contact_id, due_date and items are required' });
+  const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!contact) return reply.code(404).send({ error: 'Contact not found' });
+  const subtotal = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
+  const taxRate = 7.5; // Nigerian VAT
+  const tax = Math.round(subtotal * (taxRate / 100));
+  const total = subtotal + tax;
+  const year = new Date().getFullYear();
+  const count = db.prepare("SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND number LIKE ?").get(req.user.id, `INV-${year}-%`).c;
+  const number = `INV-${year}-${String(count + 1).padStart(3, '0')}`;
+  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total);
+  for (const it of items) {
+    const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
+    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
+      .run(info.lastInsertRowid, it.description || 'Item', qty, up, qty * up);
+  }
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(info.lastInsertRowid);
+  return { invoice: inv };
+});
+
+app.post('/invoices/:id/send', { preHandler: requireAuth }, async (req, reply) => {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  db.prepare("UPDATE invoices SET status = 'sent' WHERE id = ?").run(inv.id);
+  db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
+    .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) sent to customer`);
+  db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(inv.contact_id, req.user.id);
+  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
+});
+
+app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) => {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
+  db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
+    .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) paid ✅`);
+  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.total, inv.contact_id, req.user.id);
+  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
 
