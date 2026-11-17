@@ -175,3 +175,41 @@ db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, s
 db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('ibrahim@besconpaints.com'), 'sick', '2026-11-18', '2026-11-19', 'approved');
 
 console.log('Seeded HR module (staff, advances, leave).');
+
+// ---- seed a paid payroll run (2026-10) with payslips + statutory remittances + roster ----
+const payeMonthlySeed = (gross) => {
+  const annual = gross * 12;
+  const pensionAnnual = annual * 0.08;
+  const cra = 200000 + annual * 0.20;
+  const taxable = Math.max(0, annual - pensionAnnual - cra);
+  const bands = [[300000, 0.07], [300000, 0.11], [500000, 0.15], [500000, 0.19], [1600000, 0.21], [Infinity, 0.24]];
+  let tax = 0, rest = taxable;
+  for (const [cap, rate] of bands) { if (rest <= 0) break; const slice = Math.min(rest, cap); tax += slice * rate; rest -= slice; }
+  return Math.round(tax / 12);
+};
+const activeStaff = db.prepare("SELECT * FROM staff WHERE user_id = ? AND status = 'active'").all(uid);
+let g = 0, pn = 0, pe = 0, nt = 0;
+const runInfo = db.prepare("INSERT INTO payroll_runs (user_id, period, status) VALUES (?, '2026-10', 'paid')").run(uid);
+for (const s of activeStaff) {
+  const gross = s.salary, pension = Math.round(gross * 0.08), paye = payeMonthlySeed(gross);
+  const net = gross - pension - paye;
+  db.prepare('INSERT INTO payslips (user_id, run_id, staff_id, gross, pension, paye, net, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uid, runInfo.lastInsertRowid, s.id, gross, pension, paye, net, 'paid');
+  g += gross; pn += pension; pe += paye; nt += net;
+}
+db.prepare('UPDATE payroll_runs SET total_gross = ?, total_pension = ?, total_paye = ?, total_net = ? WHERE id = ?').run(g, pn, pe, nt, runInfo.lastInsertRowid);
+db.prepare("INSERT INTO remittances (user_id, period, type, amount, due_date, status, run_id) VALUES (?, '2026-10', 'paye', ?, '2026-11-10', 'paid', ?)").run(uid, pe, runInfo.lastInsertRowid);
+db.prepare("INSERT INTO remittances (user_id, period, type, amount, due_date, status, run_id) VALUES (?, '2026-10', 'pension', ?, '2026-11-14', 'paid', ?)").run(uid, pn + Math.round(g * 0.10), runInfo.lastInsertRowid);
+
+const today = new Date();
+const fmtDay = (d) => d.toISOString().slice(0, 10);
+const shiftsSeed = [['adaeze@besconpaints.com', 'morning'], ['tunde@besconpaints.com', 'morning'], ['funmi@besconpaints.com', 'afternoon'], ['ibrahim@besconpaints.com', 'morning'], ['ngozi@besconpaints.com', 'morning'], ['yemi@besconpaints.com', 'morning']];
+for (let i = 0; i < 3; i++) {
+  const day = new Date(today.getTime() + i * 864e5);
+  for (const [email, shift] of shiftsSeed) {
+    db.prepare('INSERT INTO shifts (user_id, staff_id, date, shift) VALUES (?, ?, ?, ?) ON CONFLICT(staff_id, date) DO NOTHING')
+      .run(uid, st(email), fmtDay(day), i === 2 && email === 'funmi@besconpaints.com' ? 'off' : shift);
+  }
+}
+
+console.log('Seeded payroll run, remittances and roster.');
