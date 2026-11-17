@@ -110,3 +110,39 @@ tkt('GPFI', 'Invoice clarification — units billed vs delivered', 'pending', 'h
 tkt('Alhaji Bello (Wholesaler)', 'Re-order request for Texcote', 'closed', 'low');
 
 console.log('Seeded products and support tickets.');
+
+// ---- seed invoices ----
+const inv = (company, number, status, issue, due, items) => {
+  const c = db.prepare('SELECT id FROM contacts WHERE company = ? AND user_id = ?').get(company, uid);
+  if (!c) return;
+  const subtotal = items.reduce((s, [d, q, up]) => s + q * up, 0);
+  const tax = Math.round(subtotal * 0.075);
+  db.prepare('INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, tax_rate, tax, total) VALUES (?, ?, ?, ?, ?, ?, ?, 7.5, ?, ?)')
+    .run(uid, c.id, number, status, issue, due, subtotal, tax, subtotal + tax);
+  const invId = db.prepare('SELECT id FROM invoices WHERE number = ?').get(number).id;
+  for (const [d, q, up] of items) {
+    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
+      .run(invId, d, q, up, q * up);
+  }
+};
+
+inv('GPFI', 'INV-2026-001', 'sent', '2026-11-03', '2026-11-10', [
+  ['Satin Paint — Ivory 20L', 40, 28900],
+  ['Primer — Universal 4L', 20, 4500],
+]);
+inv('Eko Maintenance Limited', 'INV-2026-002', 'sent', '2026-11-10', '2026-11-25', [
+  ['Texcote — Sahara Beige 20L', 25, 38500],
+  ['Screeding Paint — Grey 20L', 10, 19500],
+]);
+inv('El-Sultan Facility Management', 'INV-2026-003', 'draft', '2026-11-16', '2026-12-01', [
+  ['Emulsion Paint — Satin White 20L', 60, 24500],
+]);
+inv('Alhaji Bello (Wholesaler)', 'INV-2026-004', 'paid', '2026-10-20', '2026-10-27', [
+  ['Gloss — Brilliant White 4L', 30, 5400],
+  ['Emulsion Paint — Cream 4L', 12, 5900],
+]);
+inv('Mama Nkechi Retail', 'INV-2026-005', 'sent', '2026-11-14', '2026-11-20', [
+  ['Emulsion Paint — Satin White 4L', 8, 5100],
+]);
+
+console.log('Seeded invoices.');
