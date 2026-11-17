@@ -157,6 +157,7 @@ export default function App() {
     if (!me || !me.dept) return true;
     return (FRONT_ACCESS[me.dept] || []).includes(section);
   };
+  const isGuest = !!me?.guest; // read-only demo session — hide admin/mutating controls
 
   if (loading) return <div className="center">Loading…</div>;
 
@@ -674,10 +675,10 @@ export default function App() {
                         <button key={k} className={`pill ${hrTab === k ? 'active' : ''}`} onClick={() => setHrTab(k)}>{label}</button>
                       ))}
                     </div>
-                    {hrTab === 'staff' && <button className="btn-primary sm" onClick={() => setHrForm({ id: null, name: '', email: '', phone: '', department: 'sales', role: '', salary: 0, bank: '', pension_rate: 8, hmo_plan: '', onboarding: 'invited', next_of_kin: '', password: '' })}>+ Add staff</button>}
-                    {hrTab === 'advances' && <button className="btn-primary sm" onClick={() => setAdvForm({ staff_id: '', amount: '', reason: '' })}>+ New advance</button>}
-                    {hrTab === 'leaves' && <button className="btn-primary sm" onClick={() => setLeaveForm({ staff_id: '', type: 'annual', start_date: '', end_date: '' })}>+ New leave</button>}
-                    {hrTab === 'payroll' && <button className="btn-primary sm" onClick={async () => {
+                    {!isGuest && hrTab === 'staff' && <button className="btn-primary sm" onClick={() => setHrForm({ id: null, name: '', email: '', phone: '', department: 'sales', role: '', salary: 0, bank: '', pension_rate: 8, hmo_plan: '', onboarding: 'invited', next_of_kin: '', password: '' })}>+ Add staff</button>}
+                    {!isGuest && hrTab === 'advances' && <button className="btn-primary sm" onClick={() => setAdvForm({ staff_id: '', amount: '', reason: '' })}>+ New advance</button>}
+                    {!isGuest && hrTab === 'leaves' && <button className="btn-primary sm" onClick={() => setLeaveForm({ staff_id: '', type: 'annual', start_date: '', end_date: '' })}>+ New leave</button>}
+                    {!isGuest && hrTab === 'payroll' && <button className="btn-primary sm" onClick={async () => {
                       const period = new Date().toISOString().slice(0, 7);
                       await api('/payroll/runs', { method: 'POST', body: JSON.stringify({ period }) });
                       setPayrollRuns((await api('/payroll/runs')).runs);
@@ -1058,6 +1059,10 @@ export default function App() {
                 <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
                 <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
                 <h3 style={{ marginTop: 14 }}>⚙️ Feature access (who sees what)</h3>
+                {isGuest ? (
+                  <p className="muted">Feature access is managed by the organization owner — not available in guest mode.</p>
+                ) : (
+                  <>
                 <p className="muted">Switch off any section and it disappears from every staff member's app instantly.</p>
                 {[['customers', '👥 Customers'], ['inbox', '💬 WhatsApp Inbox'], ['invoices', '🧾 Invoicing'], ['followups', '📞 Follow-ups'], ['feedback', '📝 Feedback'], ['reports', '📊 Reports'], ['ads', '📣 Ads Studio'], ['hr', '🧑💼 HR'], ['pipeline', '🔁 Pipeline']].map(([k, label]) => (
                   <div key={k} className="inv-line">
@@ -1100,6 +1105,8 @@ export default function App() {
                     ))}
                   </>
                 )}
+                {!isGuest && (
+                  <>
                 <h3 style={{ marginTop: 14 }}>🔗 Demo links (shareable, revocable)</h3>
                 <p className="muted">Create a link to share with anyone. Revoke it and it instantly stops working for them.</p>
                 <button className="btn-primary sm" onClick={async () => {
@@ -1130,6 +1137,10 @@ export default function App() {
                     </span>
                   </div>
                 ))}
+                  </>
+                )}
+              </>
+            )}
               </div>
             )}
           </>
@@ -1176,7 +1187,7 @@ export default function App() {
           </div>
         ) : (
           <div className="card">
-            <div className="inv-head"><h3>Customer Book ({contacts.length})</h3><button className="btn-primary sm" onClick={openNewCustomer}>+ Add customer</button></div>
+            <div className="inv-head"><h3>Customer Book ({contacts.length})</h3>{!isGuest && <button className="btn-primary sm" onClick={openNewCustomer}>+ Add customer</button>}</div>
             {contacts.map((c) => (
               <div key={c.id} className="inv-row">
                 <div className="thread-ava">{(c.company || c.name || '?')[0]}</div>
@@ -1234,14 +1245,15 @@ export default function App() {
                   )}
                 </div>
                 <div className="composer">
-                  <button className="btn-ghost sm" onClick={getDraft}>✦ AI Draft</button>
+                  {!isGuest && <button className="btn-ghost sm" onClick={getDraft}>✦ AI Draft</button>}
                   <input
-                    placeholder="Type a message…"
+                    placeholder={isGuest ? 'Read-only guest mode — sending is disabled' : 'Type a message…'}
                     value={composer}
                     onChange={(e) => setComposer(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') sendMsg(); }}
+                    disabled={isGuest}
                   />
-                  <button className="btn-primary sm" onClick={sendMsg}>Send</button>
+                  {!isGuest && <button className="btn-primary sm" onClick={sendMsg}>Send</button>}
                 </div>
               </div>
             )}
@@ -1254,7 +1266,7 @@ export default function App() {
               <>
                 <div className="inv-head">
                   <h3>🧾 Invoicing</h3>
-                  <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>
+                  {!isGuest && <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>}
                 </div>
                 <div className="kpis">
                   <div className="kpi"><div className="label">Receivables</div><div className="value">{fmt(receivables)}</div></div>
@@ -1415,10 +1427,10 @@ export default function App() {
                   )}
                 </div>
                 <div className="inv-actions">
-                  {activeInv.status === 'draft' && <button className="btn-primary act-primary" onClick={sendInvoice}>Mark as sent</button>}
-                  {(activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid ✓</button>}
+                  {!isGuest && activeInv.status === 'draft' && <button className="btn-primary act-primary" onClick={sendInvoice}>Mark as sent</button>}
+                  {!isGuest && (activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid ✓</button>}
                   <div className="inv-actions-grid">
-                    {activeInv.status !== 'paid' && (
+                    {!isGuest && activeInv.status !== 'paid' && (
                       <>
                         <button className="act-btn" onClick={shareWhatsApp}><span>💬</span>WhatsApp</button>
                         <button className="act-btn" onClick={copyPayLink}><span>🔗</span>Copy link</button>
@@ -1426,7 +1438,7 @@ export default function App() {
                     )}
                     <button className="act-btn" onClick={downloadPdf}><span>⬇️</span>PDF</button>
                     <button className="act-btn" onClick={emailInvoice}><span>✉️</span>Email</button>
-                    {activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span>✏️</span>Edit</button>}
+                    {!isGuest && activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span>✏️</span>Edit</button>}
                   </div>
                 </div>
               </>
@@ -1449,7 +1461,7 @@ export default function App() {
 
         {view === 'feedback' && (
           <div className="card">
-            <div className="inv-head"><h3>📝 Conversation Feedback</h3><button className="btn-primary sm" onClick={() => setFbOpen(!fbOpen)}>+ Add feedback</button></div>
+            <div className="inv-head"><h3>📝 Conversation Feedback</h3>{!isGuest && <button className="btn-primary sm" onClick={() => setFbOpen(!fbOpen)}>+ Add feedback</button>}</div>
             <p className="muted">Capture what customers said on calls and visits — the AI reports use it.</p>
             {fbOpen && (
               <>
