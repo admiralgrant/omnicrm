@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { createHmac, randomUUID } from 'node:crypto';
 import db from './db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -264,7 +265,7 @@ app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
   const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone FROM invoices i JOIN contacts c ON c.id = i.contact_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
-  return { invoice: { ...inv, status: invStatus(inv) }, items };
+  return { invoice: { ...inv, status: invStatus(inv) }, items, pay_link: `/pay.html?token=${inv.pay_token}` };
 });
 
 app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
@@ -279,8 +280,8 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const year = new Date().getFullYear();
   const count = db.prepare("SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND number LIKE ?").get(req.user.id, `INV-${year}-%`).c;
   const number = `INV-${year}-${String(count + 1).padStart(3, '0')}`;
-  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total);
+  const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID());
   for (const it of items) {
     const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
@@ -297,7 +298,7 @@ app.post('/invoices/:id/send', { preHandler: requireAuth }, async (req, reply) =
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
     .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) sent to customer`);
   db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(inv.contact_id, req.user.id);
-  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
+  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id), pay_link: `/pay.html?token=${inv.pay_token}` };
 });
 
 app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) => {
@@ -308,6 +309,72 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
     .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) paid ✅`);
   db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.total, inv.contact_id, req.user.id);
   return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
+});
+
+// ---- public pay page (no auth; token is unguessable) ----
+const PAYSTACK_KEY = process.env.PAYSTACK_SECRET_KEY || '';
+const paystackEnabled = () => !!PAYSTACK_KEY;
+
+app.get('/pay/:token', async (req, reply) => {
+  const inv = db.prepare(`
+    SELECT i.*, c.company, c.name, u.email AS biz_email FROM invoices i
+    JOIN contacts c ON c.id = i.contact_id
+    JOIN users u ON u.id = i.user_id
+    WHERE i.pay_token = ?`).get(req.params.token);
+  if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
+  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
+  return { invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total }, items, demo: !paystackEnabled() };
+});
+
+app.post('/pay/:token/initialize', async (req, reply) => {
+  if (!paystackEnabled()) return reply.code(503).send({ error: 'Paystack is not configured. Use demo-pay.' });
+  const inv = db.prepare('SELECT i.*, u.email AS biz_email FROM invoices i JOIN users u ON u.id = i.user_id WHERE i.pay_token = ?').get(req.params.token);
+  if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
+  if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
+  const body = JSON.stringify({
+    email: inv.biz_email,
+    amount: Math.round(inv.total * 100), // kobo
+    currency: 'NGN',
+    metadata: { invoice_id: inv.id, pay_token: inv.pay_token },
+    callback_url: `${req.headers.origin || ''}/pay.html?token=${inv.pay_token}`,
+  });
+  const res = await fetch('https://api.paystack.co/transaction/initialize', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${PAYSTACK_KEY}`, 'Content-Type': 'application/json' },
+    body,
+  });
+  const data = await res.json();
+  if (!data.status) return reply.code(502).send({ error: data.message || 'Paystack error' });
+  return { authorization_url: data.data.authorization_url, reference: data.data.reference };
+});
+
+// DEMO ONLY: auto-marks the invoice paid. Refuses to run when Paystack is configured.
+app.post('/pay/:token/demo-pay', async (req, reply) => {
+  if (paystackEnabled()) return reply.code(403).send({ error: 'Demo pay disabled — Paystack is live.' });
+  const inv = db.prepare('SELECT * FROM invoices WHERE pay_token = ?').get(req.params.token);
+  if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
+  if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
+  db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
+  db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
+    .run(inv.user_id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) paid via pay link (demo)`);
+  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.total, inv.contact_id, inv.user_id);
+  return { ok: true, status: 'paid', demo: true };
+});
+
+// Paystack webhook (HMAC-SHA512 of raw body with the secret key)
+app.post('/webhooks/paystack', async (req, reply) => {
+  if (!paystackEnabled()) return reply.code(503).send({ error: 'Paystack not configured' });
+  const sig = req.headers['x-paystack-signature'];
+  const expected = createHmac('sha512', PAYSTACK_KEY).update(req.rawBody || '').digest('hex');
+  if (!sig || sig !== expected) return reply.code(401).send({ error: 'Invalid signature' });
+  const evt = req.body;
+  if (evt.event === 'charge.success') {
+    const meta = evt.data?.metadata || {};
+    if (meta.invoice_id) {
+      db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ? AND status != 'paid'").run(meta.invoice_id);
+    }
+  }
+  return { ok: true };
 });
 
 // ---- health ----
