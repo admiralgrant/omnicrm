@@ -82,3 +82,31 @@ thread('Mama Nkechi Retail', [
 ]);
 
 console.log('Seeded WhatsApp inbox threads.');
+
+// ---- seed products + tickets for the department dashboards ----
+const prods = [
+  ['Emulsion Paint — Satin White 20L', 'P-EMU-20L', 'Emulsion', 140, 15, 18500, 24500],
+  ['Emulsion Paint — Cream 4L', 'P-EMU-4L', 'Emulsion', 8, 10, 4300, 5900],
+  ['Satin Paint — Ivory 20L', 'P-SAT-20L', 'Satin', 62, 10, 21500, 28900],
+  ['Texcote — Sahara Beige 20L', 'P-TEX-20L', 'Texcote', 4, 8, 29800, 38500],
+  ['Gloss — Brilliant White 4L', 'P-GLO-4L', 'Gloss', 55, 10, 3900, 5400],
+  ['Screeding Paint — Grey 20L', 'P-SCR-20L', 'Screeding', 18, 8, 14900, 19500],
+  ['Primer — Universal 4L', 'P-PRI-4L', 'Primer', 26, 10, 3200, 4500],
+  ['Masonry Waterproof — Clear 20L', 'P-MAS-20L', 'Waterproof', 3, 6, 26500, 34000],
+];
+for (const [name, sku, cat, stock, low, cost, price] of prods) {
+  db.prepare('INSERT INTO products (user_id, name, sku, category, stock, low_stock_at, unit_cost, unit_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uid, name, sku, cat, stock, low, cost, price);
+}
+
+const tkt = (company, subject, status, priority) => {
+  const c = db.prepare('SELECT id FROM contacts WHERE company = ? AND user_id = ?').get(company, uid);
+  db.prepare('INSERT INTO tickets (user_id, contact_id, subject, status, priority) VALUES (?, ?, ?, ?, ?)')
+    .run(uid, c ? c.id : null, subject, status, priority);
+};
+tkt('Eko Maintenance Limited', 'Paint delivery delayed for the Lekki Phase 2 site', 'open', 'high');
+tkt('El-Sultan Facility Management', 'Need colour matching quote for 3 apartment blocks', 'open', 'medium');
+tkt('GPFI', 'Invoice clarification — units billed vs delivered', 'pending', 'high');
+tkt('Alhaji Bello (Wholesaler)', 'Re-order request for Texcote', 'closed', 'low');
+
+console.log('Seeded products and support tickets.');
