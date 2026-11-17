@@ -165,6 +165,23 @@ input { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; 
 .act-btn span { font-size: 16px; }
 .fb-area { width: 100%; min-height: 110px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-family: inherit; font-size: 14px; margin-bottom: 8px; resize: vertical; }
 .report h3 { font-size: 15px; }
+.dept-tag {
+  display: inline-block; margin-left: 8px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px; background: var(--accent);
+  color: #fff; border-radius: 20px; padding: 3px 10px; vertical-align: middle;
+}
+.ava-c0 { background: linear-gradient(135deg, #0b8f5c, #12b57b); }
+.ava-c1 { background: linear-gradient(135deg, #7a5af8, #9a7bff); }
+.ava-c2 { background: linear-gradient(135deg, #e67e22, #f0a04b); }
+.ava-c3 { background: linear-gradient(135deg, #2471a3, #4a9bd1); }
+.ava-c4 { background: linear-gradient(135deg, #c0392b, #e06c5f); }
+.hr-form { border: 1px dashed var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; background: #fbfdfb; }
+.switch { position: relative; display: inline-block; width: 42px; height: 24px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; inset: 0; background: #d4dcd7; border-radius: 24px; transition: 0.2s; }
+.slider:before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+.switch input:checked + .slider { background: var(--accent); }
+.switch input:checked + .slider:before { transform: translateX(18px); }
 /* compact KPIs inside cards */
 .card .kpis { margin: 6px 0 14px; gap: 8px; }
 .card .kpis .kpi { padding: 10px 12px; box-shadow: none; }
