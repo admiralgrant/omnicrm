@@ -33,14 +33,17 @@
   <script>
     const token = new URLSearchParams(location.search).get('token');
     const el = document.getElementById('app');
+    const CURS = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
     const fmt = (n) => '₦' + Number(n).toLocaleString();
+    const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString();
     if (!token) { el.innerHTML = '<p class="err">Missing invoice link.</p>'; }
     (async () => {
       try {
         const res = await fetch('/api/pay/' + encodeURIComponent(token));
         if (!res.ok) throw new Error((await res.json()).error || 'Invoice not found');
         const { invoice, items, demo } = await res.json();
-        const rows = items.map((it) => `<div class="row"><span>${it.description} × ${it.qty}</span><span>${fmt(it.amount)}</span></div>`).join('');
+        const cur = invoice.currency || 'NGN';
+        const rows = items.map((it) => `<div class="row"><span>${it.description} × ${it.qty}</span><span>${fmtCur(it.amount, cur)}</span></div>`).join('');
         let action;
         if (invoice.status === 'paid') {
           action = `<button class="btn" disabled>Already paid ✓</button>`;
@@ -48,18 +51,19 @@
           action = `<button class="btn" onclick="demoPay()">Mark as paid (demo)</button>
                     <div class="demo-note">Demo mode — Paystack is not connected yet. This button simulates a successful payment so you can feel the flow.</div>`;
         } else {
-          action = `<button class="btn" onclick="initPay()">Pay ${fmt(invoice.total)} with Paystack</button>`;
+          action = `<button class="btn" onclick="initPay()">Pay ${fmtCur(invoice.total, cur)} with Paystack</button>`;
         }
         el.innerHTML = `
           <div class="logo"><div class="mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
           <h1>${invoice.number}</h1>
           <div class="sub">${invoice.company} · issued ${invoice.issue_date} · due ${invoice.due_date}</div>
           <span class="status ${invoice.status}">${invoice.status}</span>
-          <div class="amt" style="margin-top:14px">${fmt(invoice.total)}</div>
+          <div class="amt" style="margin-top:14px">${fmtCur(invoice.total, cur)}</div>
+          ${cur !== 'NGN' ? `<div class="sub" style="margin-top:-10px">≈ ${fmt(invoice.ngn_total)} (rate ${Number(invoice.fx_rate).toLocaleString()})</div>` : ''}
           ${rows}
-          <div class="row"><span>Subtotal</span><span>${fmt(invoice.subtotal)}</span></div>
-          <div class="row"><span>VAT (7.5%)</span><span>${fmt(invoice.tax)}</span></div>
-          <div class="row totals"><span>Total</span><span>${fmt(invoice.total)}</span></div>
+          <div class="row"><span>Subtotal</span><span>${fmtCur(invoice.subtotal, cur)}</span></div>
+          <div class="row"><span>VAT (7.5%)</span><span>${fmtCur(invoice.tax, cur)}</span></div>
+          <div class="row totals"><span>Total</span><span>${fmtCur(invoice.total, cur)}</span></div>
           ${action}
           <p class="ok" id="msg"></p>`;
       } catch (e) {
