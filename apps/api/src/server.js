@@ -164,6 +164,66 @@ app.get('/ai/followups', { preHandler: requireAuth }, async (req) => {
   return { followups };
 });
 
+// ---- WhatsApp inbox ----
+app.get('/inbox', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`
+    SELECT c.id AS contact_id, c.name, c.company, c.status, c.tags,
+           m.body AS last_message, m.direction AS last_direction, m.created_at AS last_at,
+           (SELECT COUNT(*) FROM messages WHERE contact_id = c.id AND direction = 'in' AND read = 0) AS unread
+    FROM contacts c
+    JOIN messages m ON m.id = (SELECT id FROM messages WHERE contact_id = c.id AND user_id = ? ORDER BY id DESC LIMIT 1)
+    WHERE c.user_id = ?
+    ORDER BY m.id DESC`).all(req.user.id, req.user.id);
+  return { threads: rows };
+});
+
+app.get('/messages', { preHandler: requireAuth }, async (req, reply) => {
+  const { contact_id } = req.query || {};
+  if (!contact_id) return reply.code(400).send({ error: 'contact_id is required' });
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!contact) return reply.code(404).send({ error: 'Contact not found' });
+  const messages = db.prepare('SELECT * FROM messages WHERE contact_id = ? AND user_id = ? ORDER BY id ASC').all(contact_id, req.user.id);
+  return { contact, messages };
+});
+
+app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
+  const { contact_id, body } = req.body || {};
+  if (!contact_id || !body) return reply.code(400).send({ error: 'contact_id and body are required' });
+  const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!contact) return reply.code(404).send({ error: 'Contact not found' });
+  const info = db.prepare('INSERT INTO messages (user_id, contact_id, direction, body, status) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, 'out', body, 'sent');
+  db.prepare('INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, 'whatsapp', 'whatsapp', body);
+  db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(contact_id, req.user.id);
+  return { message: db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.post('/messages/:id/read', { preHandler: requireAuth }, async (req, reply) => {
+  db.prepare('UPDATE messages SET read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  return { ok: true };
+});
+
+// AI draft: next best message for a contact from its state
+app.get('/ai/draft', { preHandler: requireAuth }, async (req, reply) => {
+  const { contact_id } = req.query || {};
+  if (!contact_id) return reply.code(400).send({ error: 'contact_id is required' });
+  const c = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!c) return reply.code(404).send({ error: 'Contact not found' });
+  let draft;
+  const first = c.company ? c.company.split(' ')[0] : c.name;
+  if (c.debt_ngn > 0) {
+    draft = `Hello ${first}, this is a gentle reminder from your records: a balance of ₦${Number(c.debt_ngn).toLocaleString()} is still outstanding. Kindly confirm when payment can be made. Thank you!`;
+  } else if (c.status === 'proposal_sent') {
+    draft = `Hi ${first}, just following up on the proposal I sent. Happy to walk you through the tier that suits your needs — 15 minutes is all I would need. Would this week work for a call?`;
+  } else if (c.status === 'won') {
+    draft = `Hello ${first}, thank you for partnering with us! Your order is confirmed — delivery details are on the way.`;
+  } else {
+    draft = `Hello ${first}, hope business is going well. Just checking in — is there anything we can support you with this week?`;
+  }
+  return { contact_id: c.id, draft };
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
 
