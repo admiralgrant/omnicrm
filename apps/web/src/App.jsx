@@ -4,7 +4,8 @@ const API = '/api';
 const tokenKey = 'omnicrm_token';
 
 async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const headers = { ...(options.headers || {}) };
+  if (options.body) headers['Content-Type'] = 'application/json';
   const token = localStorage.getItem(tokenKey);
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(API + path, { ...options, headers });
@@ -31,19 +32,27 @@ export default function App() {
   const [lowCount, setLowCount] = useState(0);
   const [tickets, setTickets] = useState([]);
   const [ticketCounts, setTicketCounts] = useState({ open: 0, pending: 0, closed: 0 });
+  const [invoices, setInvoices] = useState([]);
+  const [invCounts, setInvCounts] = useState({});
+  const [receivables, setReceivables] = useState(0);
+  const [invView, setInvView] = useState('list'); // list | new | detail
+  const [activeInv, setActiveInv] = useState(null);
+  const [invItems, setInvItems] = useState([]);
+  const [newInv, setNewInv] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
     (async () => {
       try {
-        const [d, c, f, t, p, tk] = await Promise.all([
+        const [d, c, f, t, p, tk, iv] = await Promise.all([
           api('/dashboard'), api('/contacts'), api('/ai/followups'), api('/inbox'),
-          api('/products'), api('/tickets'),
+          api('/products'), api('/tickets'), api('/invoices'),
         ]);
         setDash(d.kpis); setContacts(c.contacts); setFollowups(f.followups); setThreads(t.threads);
         setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
         setTickets(tk.tickets); setTicketCounts(tk.counts);
+        setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
       } catch (e) {
         console.error(e);
         localStorage.removeItem(tokenKey);
@@ -110,10 +119,39 @@ export default function App() {
   };
   const backToThreads = () => { setActiveContact(null); setMsgs([]); setDraft(''); };
 
+  const openInvoice = async (i) => {
+    const d = await api(`/invoices/${i.id}`);
+    setActiveInv(d.invoice); setInvItems(d.items); setInvView('detail');
+  };
+  const sendInvoice = async () => {
+    await api(`/invoices/${activeInv.id}/send`, { method: 'POST' });
+    const d = await api('/invoices');
+    setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables);
+    setActiveInv({ ...activeInv, status: 'sent' });
+  };
+  const payInvoice = async () => {
+    await api(`/invoices/${activeInv.id}/paid`, { method: 'POST' });
+    const d = await api('/invoices');
+    setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables);
+    setActiveInv({ ...activeInv, status: 'paid' });
+  };
+  const newInvoice = () => {
+    setInvView('new');
+    setNewInv({ contact_id: '', due_date: '', items: [{ description: '', qty: 1, unit_price: '' }] });
+  };
+  const saveInvoice = async () => {
+    if (!newInv.contact_id || newInv.items.length === 0) return;
+    await api('/invoices', { method: 'POST', body: JSON.stringify(newInv) });
+    const d = await api('/invoices');
+    setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables);
+    setNewInv(null); setInvView('list');
+  };
+
   const nav = [
     ['dashboard', '🏠', 'Dashboard'],
     ['customers', '👥', 'Customers'],
     ['inbox', '💬', 'Inbox'],
+    ['invoices', '🧾', 'Invoicing'],
     ['followups', '📞', 'Follow-ups'],
     ['ads', '📣', 'Ads Studio'],
   ];
@@ -301,6 +339,111 @@ export default function App() {
                   <button className="btn-primary sm" onClick={sendMsg}>Send</button>
                 </div>
               </div>
+            )}
+          </div>
+        )}
+
+        {view === 'invoices' && (
+          <div className="card">
+            {invView === 'list' && (
+              <>
+                <div className="inv-head">
+                  <h3>🧾 Invoicing</h3>
+                  <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>
+                </div>
+                <div className="kpis">
+                  <div className="kpi"><div className="label">Receivables</div><div className="value">{fmt(receivables)}</div></div>
+                  <div className="kpi"><div className="label">Overdue</div><div className="value">{invCounts.overdue || 0}</div></div>
+                  <div className="kpi"><div className="label">Sent</div><div className="value">{invCounts.sent || 0}</div></div>
+                  <div className="kpi"><div className="label">Paid</div><div className="value">{invCounts.paid || 0}</div></div>
+                </div>
+                {invoices.map((i) => (
+                  <div key={i.id} className="thread" onClick={() => openInvoice(i)}>
+                    <div className="thread-ava">🧾</div>
+                    <div className="thread-info">
+                      <b>{i.number} · {i.company || i.name}</b>
+                      <span>Due {i.due_date} · VAT ₦{Number(i.tax).toLocaleString()}</span>
+                    </div>
+                    <div className="inv-amt">{fmt(i.total)}</div>
+                    <span className={`chip ${i.status}`}>{i.status}</span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {invView === 'new' && newInv && (
+              <>
+                <h3>New Invoice</h3>
+                <select value={newInv.contact_id} onChange={(e) => setNewInv({ ...newInv, contact_id: e.target.value })}>
+                  <option value="">Select customer…</option>
+                  {contacts.map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
+                </select>
+                <label className="inv-label">Due date</label>
+                <input type="date" value={newInv.due_date} onChange={(e) => setNewInv({ ...newInv, due_date: e.target.value })} />
+                <label className="inv-label">Items</label>
+                {newInv.items.map((it, idx) => (
+                  <div key={idx} className="inv-item-row">
+                    <input
+                      placeholder="Description"
+                      value={it.description}
+                      onChange={(e) => {
+                        const items = [...newInv.items];
+                        items[idx] = { ...it, description: e.target.value };
+                        setNewInv({ ...newInv, items });
+                      }}
+                    />
+                    <input
+                      type="number" min="1" placeholder="Qty" style={{ width: 64 }}
+                      value={it.qty}
+                      onChange={(e) => {
+                        const items = [...newInv.items];
+                        items[idx] = { ...it, qty: e.target.value };
+                        setNewInv({ ...newInv, items });
+                      }}
+                    />
+                    <input
+                      type="number" min="0" placeholder="Unit ₦" style={{ width: 100 }}
+                      value={it.unit_price}
+                      onChange={(e) => {
+                        const items = [...newInv.items];
+                        items[idx] = { ...it, unit_price: e.target.value };
+                        setNewInv({ ...newInv, items });
+                      }}
+                    />
+                    <button className="btn-ghost sm" onClick={() => setNewInv({ ...newInv, items: newInv.items.filter((_, j) => j !== idx) })}>✕</button>
+                  </div>
+                ))}
+                <button className="btn-ghost sm" onClick={() => setNewInv({ ...newInv, items: [...newInv.items, { description: '', qty: 1, unit_price: '' }] })}>+ Add item</button>
+                <div className="quick-actions">
+                  <button className="btn-primary" onClick={saveInvoice}>Save invoice (7.5% VAT added)</button>
+                  <button className="btn-ghost" onClick={() => setInvView('list')}>Cancel</button>
+                </div>
+              </>
+            )}
+
+            {invView === 'detail' && activeInv && (
+              <>
+                <div className="convo-head">
+                  <button className="btn-ghost" onClick={() => setInvView('list')}>←</button>
+                  <div><b>{activeInv.number}</b><span className="muted">{activeInv.company || activeInv.name} · issued {activeInv.issue_date} · due {activeInv.due_date}</span></div>
+                  <span className={`chip ${activeInv.status}`}>{activeInv.status}</span>
+                </div>
+                <div className="inv-items">
+                  {invItems.map((it) => (
+                    <div key={it.id} className="inv-line">
+                      <span>{it.description} × {it.qty}</span>
+                      <span>{fmt(it.amount)}</span>
+                    </div>
+                  ))}
+                  <div className="inv-line muted"><span>Subtotal</span><span>{fmt(activeInv.subtotal)}</span></div>
+                  <div className="inv-line muted"><span>VAT (7.5%)</span><span>{fmt(activeInv.tax)}</span></div>
+                  <div className="inv-line total"><span>Total</span><span>{fmt(activeInv.total)}</span></div>
+                </div>
+                <div className="quick-actions">
+                  {activeInv.status === 'draft' && <button className="btn-primary" onClick={sendInvoice}>Mark as sent</button>}
+                  {(activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary" onClick={payInvoice}>Mark as paid ✓</button>}
+                </div>
+              </>
             )}
           </div>
         )}
