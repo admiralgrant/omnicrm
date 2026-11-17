@@ -83,6 +83,7 @@ export default function App() {
   const [shifts, setShifts] = useState([]);
   const [portalShifts, setPortalShifts] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
+  const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1559,12 +1560,27 @@ export default function App() {
       </main>
 
       <nav className="bottomnav">
-        {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
+        {nav.filter(([k]) => ['dashboard', 'customers', 'inbox', 'invoices'].includes(k) && allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`bn-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span>{icon}</span>{label}
           </div>
         ))}
+        <div className={`bn-item ${moreOpen ? 'active' : ''}`} onClick={() => setMoreOpen(!moreOpen)}>
+          <span>{moreOpen ? '✕' : '⋯'}</span>More
+        </div>
       </nav>
+      {moreOpen && (
+        <div className="more-sheet" onClick={() => setMoreOpen(false)}>
+          <div className="more-sheet-card" onClick={(e) => e.stopPropagation()}>
+            <b className="muted">More</b>
+            {nav.filter(([k]) => !['dashboard', 'customers', 'inbox', 'invoices'].includes(k) && allowed(k)).map(([k, icon, label]) => (
+              <div key={k} className={`bn-item more-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setMoreOpen(false); }}>
+                <span>{icon}</span>{label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
