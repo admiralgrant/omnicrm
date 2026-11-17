@@ -51,6 +51,26 @@ input { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; 
 .ads-list { list-style: none; margin: 12px 0 16px; }
 .ads-list li { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
 .ads-list li:last-child { border-bottom: 0; }
+.thread { display: flex; align-items: center; gap: 11px; padding: 12px 6px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.thread:hover { background: #fafbf9; }
+.thread:last-child { border-bottom: 0; }
+.thread-ava { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #0b8f5c, #12b57b); color: #fff; display: grid; place-items: center; font-weight: 700; flex-shrink: 0; }
+.thread-info { flex: 1; min-width: 0; }
+.thread-info b { display: block; font-size: 14px; }
+.thread-info span { display: block; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.unread-badge { background: var(--accent); color: #fff; border-radius: 20px; font-size: 11px; font-weight: 700; padding: 2px 8px; }
+.convo-head { display: flex; align-items: center; gap: 11px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.bubbles { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; min-height: 220px; max-height: 380px; overflow-y: auto; }
+.bubble { max-width: 76%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.45; }
+.bubble.in { background: #eceff0; border-bottom-left-radius: 5px; align-self: flex-start; }
+.bubble.out { background: #d9f2e4; border-bottom-right-radius: 5px; align-self: flex-end; }
+.bubble.draft { background: #fff8ea; border: 1px dashed #e3c877; align-self: flex-start; max-width: 88%; }
+.bubble.draft b { display: block; font-size: 10.5px; letter-spacing: 0.5px; color: #8a6a12; margin-bottom: 4px; }
+.draft-acts { display: flex; gap: 8px; margin-top: 9px; }
+.composer { display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.composer input { flex: 1; }
+.btn-ghost { background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--ink-soft); font-family: inherit; }
+.btn-primary.sm, .btn-ghost.sm { padding: 7px 13px; font-size: 12.5px; }
 @media (max-width: 760px) {
   .sidebar { display: none; }
   .main { padding: 18px 18px 84px; }
