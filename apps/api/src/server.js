@@ -25,6 +25,27 @@ function requireAuth(req, reply, done) {
   }
 }
 
+// ---- role-based access: staff see only their department's sections ----
+const SECTION_ACCESS = {
+  sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'pipeline'],
+  support: ['dashboard', 'support', 'inbox', 'feedback', 'reports'],
+  inventory: ['dashboard', 'inventory', 'product', 'reports'],
+  hr: ['dashboard', 'hr', 'reports'],
+  account: ['dashboard', 'invoices', 'reports'],
+};
+const gate = (section) => (req, reply, done) => {
+  const dept = req.user.dept;
+  if (!dept) return done(); // owner sees everything
+  const allowed = SECTION_ACCESS[dept] || [];
+  if (section === 'dashboard' || allowed.includes(section)) return done();
+  return reply.code(403).send({ error: `Your department (${dept}) does not have access to this section.` });
+};
+const orgFeatures = (userId) => {
+  const row = db.prepare("SELECT value FROM org_settings WHERE user_id = ? AND key = 'features'").get(userId);
+  if (!row) return null;
+  try { return JSON.parse(row.value); } catch { return null; }
+};
+
 // ---- auth routes ----
 app.post('/auth/register', async (req, reply) => {
   const { email, password, name, business_name } = req.body || {};
@@ -42,9 +63,15 @@ app.post('/auth/login', async (req, reply) => {
   const { email, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email || '');
   if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
-    return reply.code(401).send({ error: 'Invalid email or password' });
+    // staff login: department-scoped access
+    const staff = db.prepare('SELECT * FROM staff WHERE email = ? AND can_login = 1').get(email);
+    if (!staff || !bcrypt.compareSync(password || '', staff.password_hash || '')) {
+      return reply.code(401).send({ error: 'Invalid email or password' });
+    }
+    const token = jwt.sign({ id: staff.user_id, email: staff.email, dept: staff.department, staff_id: staff.id, name: staff.name }, JWT_SECRET, { expiresIn: '7d' });
+    return { token, user: { id: staff.user_id, email: staff.email, name: staff.name, dept: staff.department, staff: true, business_name: null } };
   }
-  const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
   return { token, user: { id: user.id, email: user.email, name: user.name, business_name: user.business_name } };
 });
 
@@ -784,6 +811,108 @@ app.post('/webhooks/whatsapp', async (req, reply) => {
     }
   }
   return { ok: true };
+});
+
+// ---- org feature switches (admin) ----
+app.get('/org/features', { preHandler: [requireAuth, gate('dashboard')] }, async (req) => {
+  return { features: orgFeatures(req.user.id) || {
+    dashboard: true, customers: true, inbox: true, invoices: true, followups: true,
+    feedback: true, reports: true, ads: true, hr: true, pipeline: true,
+    support: true, inventory: true, product: true, account: true,
+  } };
+});
+
+app.put('/org/features', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept) return reply.code(403).send({ error: 'Only the organization owner can change feature access.' });
+  const features = req.body?.features;
+  if (!features || typeof features !== 'object') return reply.code(400).send({ error: 'features object is required' });
+  db.prepare("INSERT INTO org_settings (user_id, key, value) VALUES (?, 'features', ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value")
+    .run(req.user.id, JSON.stringify(features));
+  return { features };
+});
+
+// ---- HR module ----
+app.get('/hr-dashboard', { preHandler: [requireAuth, gate('hr')] }, async (req) => {
+  const staff = db.prepare('SELECT * FROM staff WHERE user_id = ?').all(req.user.id);
+  const payroll = staff.filter((s) => s.status === 'active').reduce((sum, s) => sum + (s.salary || 0), 0);
+  const pension = staff.filter((s) => s.status === 'active').reduce((sum, s) => sum + (s.salary || 0) * (s.pension_rate / 100), 0);
+  const advances = db.prepare('SELECT * FROM salary_advances WHERE user_id = ?').all(req.user.id);
+  const leaves = db.prepare('SELECT * FROM leaves WHERE user_id = ?').all(req.user.id);
+  return {
+    stats: {
+      headcount: staff.filter((s) => s.status === 'active').length,
+      monthly_payroll: Math.round(payroll),
+      monthly_pension: Math.round(pension),
+      pending_advances: advances.filter((a) => a.status === 'pending').reduce((s, a) => s + a.amount, 0),
+      pending_advance_count: advances.filter((a) => a.status === 'pending').length,
+      open_leaves: leaves.filter((l) => l.status === 'pending').length,
+      onboarding_in_progress: staff.filter((s) => s.onboarding !== 'active' && s.status === 'active').length,
+    },
+    staff,
+    advances: advances.map((a) => ({ ...a, name: staff.find((s) => s.id === a.staff_id)?.name })),
+    leaves: leaves.map((l) => ({ ...l, name: staff.find((s) => s.id === l.staff_id)?.name })),
+  };
+});
+
+app.post('/staff', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const { name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, password } = req.body || {};
+  if (!name) return reply.code(400).send({ error: 'Staff name is required' });
+  const password_hash = password ? bcrypt.hashSync(password, 10) : null;
+  const info = db.prepare('INSERT INTO staff (user_id, name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, can_login, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, name, email || null, phone || null, department || 'sales', role || 'Staff', Number(salary) || 0, bank || null, Number(pension_rate ?? 8), hmo_plan || null, onboarding || 'invited', next_of_kin || null, password ? 1 : 0, password_hash);
+  return { staff: db.prepare('SELECT * FROM staff WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.put('/staff/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM staff WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Staff not found' });
+  const c = req.body || {};
+  db.prepare('UPDATE staff SET name = ?, email = ?, phone = ?, department = ?, role = ?, salary = ?, bank = ?, pension_rate = ?, hmo_plan = ?, onboarding = ?, status = ?, next_of_kin = ? WHERE id = ? AND user_id = ?')
+    .run(c.name ?? existing.name, c.email ?? existing.email, c.phone ?? existing.phone, c.department ?? existing.department, c.role ?? existing.role,
+      Number(c.salary ?? existing.salary), c.bank ?? existing.bank, Number(c.pension_rate ?? existing.pension_rate), c.hmo_plan ?? existing.hmo_plan,
+      c.onboarding ?? existing.onboarding, c.status ?? existing.status, c.next_of_kin ?? existing.next_of_kin, req.params.id, req.user.id);
+  return { staff: db.prepare('SELECT * FROM staff WHERE id = ?').get(req.params.id) };
+});
+
+app.delete('/staff/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const existing = db.prepare('SELECT id FROM staff WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Staff not found' });
+  db.prepare('DELETE FROM staff WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  return { ok: true };
+});
+
+app.post('/salary-advances', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const { staff_id, amount, reason } = req.body || {};
+  if (!staff_id || !amount) return reply.code(400).send({ error: 'staff_id and amount are required' });
+  const info = db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason) VALUES (?, ?, ?, ?)')
+    .run(req.user.id, staff_id, Number(amount), reason || null);
+  return { advance: db.prepare('SELECT * FROM salary_advances WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.put('/salary-advances/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM salary_advances WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Advance not found' });
+  const { status } = req.body || {};
+  if (!['pending', 'approved', 'repaid'].includes(status)) return reply.code(400).send({ error: 'status must be pending, approved or repaid' });
+  db.prepare('UPDATE salary_advances SET status = ? WHERE id = ? AND user_id = ?').run(status, req.params.id, req.user.id);
+  return { advance: db.prepare('SELECT * FROM salary_advances WHERE id = ?').get(req.params.id) };
+});
+
+app.post('/leaves', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const { staff_id, type, start_date, end_date } = req.body || {};
+  if (!staff_id || !start_date || !end_date) return reply.code(400).send({ error: 'staff_id, start_date and end_date are required' });
+  const info = db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, staff_id, type || 'annual', start_date, end_date);
+  return { leave: db.prepare('SELECT * FROM leaves WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.put('/leaves/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM leaves WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Leave not found' });
+  const { status } = req.body || {};
+  if (!['pending', 'approved', 'rejected'].includes(status)) return reply.code(400).send({ error: 'status must be pending, approved or rejected' });
+  db.prepare('UPDATE leaves SET status = ? WHERE id = ? AND user_id = ?').run(status, req.params.id, req.user.id);
+  return { leave: db.prepare('SELECT * FROM leaves WHERE id = ?').get(req.params.id) };
 });
 
 // ---- health ----
