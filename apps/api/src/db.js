@@ -99,6 +99,59 @@ CREATE TABLE IF NOT EXISTS feedback (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
+
+CREATE TABLE IF NOT EXISTS staff (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  department TEXT NOT NULL DEFAULT 'sales',  -- sales | support | inventory | hr | account
+  role TEXT NOT NULL DEFAULT 'Staff',
+  salary REAL NOT NULL DEFAULT 0,
+  bank TEXT,
+  pension_rate REAL NOT NULL DEFAULT 8,      -- % of salary (contributory pension)
+  hmo_plan TEXT,
+  onboarding TEXT NOT NULL DEFAULT 'invited', -- invited | documents | orientation | active
+  status TEXT NOT NULL DEFAULT 'active',     -- active | inactive
+  can_login INTEGER NOT NULL DEFAULT 0,
+  password_hash TEXT,
+  start_date TEXT NOT NULL DEFAULT (date('now')),
+  next_of_kin TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_staff_user ON staff(user_id);
+
+CREATE TABLE IF NOT EXISTS salary_advances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  staff_id INTEGER NOT NULL REFERENCES staff(id),
+  amount REAL NOT NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | repaid
+  requested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_advances_user ON salary_advances(user_id);
+
+CREATE TABLE IF NOT EXISTS leaves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  staff_id INTEGER NOT NULL REFERENCES staff(id),
+  type TEXT NOT NULL DEFAULT 'annual',      -- annual | sick | maternity | paternity | unpaid
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_leaves_user ON leaves(user_id);
+
+CREATE TABLE IF NOT EXISTS org_settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  UNIQUE(user_id, key)
+);
 CREATE TABLE IF NOT EXISTS invoices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
