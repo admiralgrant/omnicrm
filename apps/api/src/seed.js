@@ -155,6 +155,11 @@ inv('Mama Nkechi Retail', 'INV-2026-005', 'sent', '2026-11-14', '2026-11-20', [
 inv('Knight Frank Nigeria', 'INV-2026-006', 'sent', '2026-11-15', '2026-12-05', [
   ['Emulsion Paint — Satin White 20L', 45, 18.2],
 ], 'USD', 1350.055103);
+// October paid invoice attributed to Adaeze (feeds her commission on the 2026-10 run)
+inv('Eko Maintenance Limited', 'INV-2026-007', 'paid', '2026-10-08', '2026-10-15', [
+  ['Texcote — Sahara Beige 20L', 18, 38500],
+  ['Screeding Paint — Grey 20L', 8, 19500],
+]);
 
 console.log('Seeded invoices.');
 
@@ -170,6 +175,18 @@ mkStaff('Funmi Adeyemi', 'funmi@besconpaints.com', '08083334455', 'support', 'Su
 mkStaff('Ibrahim Musa', 'ibrahim@besconpaints.com', '08094445566', 'inventory', 'Store Manager', 230000, 'First Bank · 0222333444', 8, 'AXA Mansard Basic', 'active', 'Aisha Musa · 08084445566', 0, null);
 mkStaff('Ngozi Okafor', 'ngozi@besconpaints.com', '08105556677', 'hr', 'HR Officer', 280000, 'UBA · 0333444555', 8, 'Hygeia Gold', 'documents', 'Emeka Okafor · 08095556677', 0, null);
 mkStaff('Yemi Alade', 'yemi@besconpaints.com', '08116667788', 'account', 'Accountant', 300000, 'Stanbic · 0444555666', 8, 'Hygeia Gold', 'invited', 'Bisi Alade · 08107778899', 0, null);
+
+// commission rates for sales staff
+db.prepare("UPDATE staff SET commission_rate = 5 WHERE email = 'adaeze@besconpaints.com'").run();
+db.prepare("UPDATE staff SET commission_rate = 3 WHERE email = 'tunde@besconpaints.com'").run();
+
+// assign customer accounts to sales reps (commission attribution)
+const adaezeAccounts = ['Alpha Mead Group', 'Global Property & Facilities International (GPFI)', 'Knight Frank Nigeria', 'Eko Maintenance Limited', 'James Cubitt Facilities Management', 'Protech Facility Management', 'Arkland Facilities Management', 'Elalan Facilities Services', 'Bloom Projects & Facilities Management', 'Total Facilities Management Ltd'];
+const tundeAccounts = ['Alhaji Bello (Wholesaler)', 'Mama Nkechi Retail', 'El-Sultan Facility Management', 'Propertygate Facilities Management', 'ATIS Facilities', 'Max-Migold Facilities Management', 'Green Facilities Limited', 'Blue Mahogany Facilities', 'Jide Taiwo Facilities Management', 'Prime Facilities Management'];
+const adaezeId = db.prepare("SELECT id FROM staff WHERE email = 'adaeze@besconpaints.com'").get().id;
+const tundeId = db.prepare("SELECT id FROM staff WHERE email = 'tunde@besconpaints.com'").get().id;
+for (const comp of adaezeAccounts) db.prepare('UPDATE contacts SET staff_id = ? WHERE company = ? AND user_id = ?').run(adaezeId, comp, uid);
+for (const comp of tundeAccounts) db.prepare('UPDATE contacts SET staff_id = ? WHERE company = ? AND user_id = ?').run(tundeId, comp, uid);
 
 const st = (email) => db.prepare('SELECT id FROM staff WHERE email = ?').get(email).id;
 db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('tunde@besconpaints.com'), 60000, 'School fees', 'pending');
@@ -192,16 +209,25 @@ const payeMonthlySeed = (gross) => {
   return Math.round(tax / 12);
 };
 const activeStaff = db.prepare("SELECT * FROM staff WHERE user_id = ? AND status = 'active'").all(uid);
-let g = 0, pn = 0, pe = 0, nt = 0;
+// commissions for the October run: paid invoices issued in 2026-10 attributed to reps
+const commAgg = db.prepare(`
+  SELECT c.staff_id AS sid, COALESCE(SUM(i.ngn_total), 0) AS value
+  FROM invoices i JOIN contacts c ON c.id = i.contact_id
+  WHERE i.user_id = ? AND i.status = 'paid' AND i.issue_date LIKE '2026-10%' AND c.staff_id IS NOT NULL
+  GROUP BY c.staff_id`).all(uid);
+const commByStaff = Object.fromEntries(commAgg.map((r) => [r.sid, r.value]));
+let g = 0, pn = 0, pe = 0, nt = 0, cm = 0;
 const runInfo = db.prepare("INSERT INTO payroll_runs (user_id, period, status) VALUES (?, '2026-10', 'paid')").run(uid);
 for (const s of activeStaff) {
-  const gross = s.salary, pension = Math.round(gross * 0.08), paye = payeMonthlySeed(gross);
-  const net = gross - pension - paye;
-  db.prepare('INSERT INTO payslips (user_id, run_id, staff_id, gross, pension, paye, net, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(uid, runInfo.lastInsertRowid, s.id, gross, pension, paye, net, 'paid');
-  g += gross; pn += pension; pe += paye; nt += net;
+  const gross = s.salary;
+  const commission = Math.round((commByStaff[s.id] || 0) * ((s.commission_rate || 0) / 100));
+  const pension = Math.round(gross * 0.08), paye = payeMonthlySeed(gross);
+  const net = gross + commission - pension - paye;
+  db.prepare('INSERT INTO payslips (user_id, run_id, staff_id, gross, commission, pension, paye, net, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uid, runInfo.lastInsertRowid, s.id, gross, commission, pension, paye, net, 'paid');
+  g += gross; pn += pension; pe += paye; nt += net; cm += commission;
 }
-db.prepare('UPDATE payroll_runs SET total_gross = ?, total_pension = ?, total_paye = ?, total_net = ? WHERE id = ?').run(g, pn, pe, nt, runInfo.lastInsertRowid);
+db.prepare('UPDATE payroll_runs SET total_gross = ?, total_pension = ?, total_paye = ?, total_net = ?, total_commission = ? WHERE id = ?').run(g, pn, pe, nt, cm, runInfo.lastInsertRowid);
 db.prepare("INSERT INTO remittances (user_id, period, type, amount, due_date, status, run_id) VALUES (?, '2026-10', 'paye', ?, '2026-11-10', 'paid', ?)").run(uid, pe, runInfo.lastInsertRowid);
 db.prepare("INSERT INTO remittances (user_id, period, type, amount, due_date, status, run_id) VALUES (?, '2026-10', 'pension', ?, '2026-11-14', 'paid', ?)").run(uid, pn + Math.round(g * 0.10), runInfo.lastInsertRowid);
 
