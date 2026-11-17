@@ -153,3 +153,25 @@ inv('Knight Frank Nigeria', 'INV-2026-006', 'sent', '2026-11-15', '2026-12-05', 
 ], 'USD', 1350.055103);
 
 console.log('Seeded invoices.');
+
+// ---- seed HR: staff, salary advances, leave ----
+const mkStaff = (name, email, phone, department, role, salary, bank, pensionRate, hmo, onboarding, nextOfKin, canLogin, password) => {
+  db.prepare('INSERT INTO staff (user_id, name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, can_login, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uid, name, email, phone, department, role, salary, bank, pensionRate, hmo, onboarding, nextOfKin, canLogin, password ? bcrypt.hashSync(password, 10) : null);
+};
+
+mkStaff('Adaeze Nwosu', 'adaeze@besconpaints.com', '08061112233', 'sales', 'Sales Lead', 320000, 'GTBank · 0123456789', 8, 'Hygeia Silver', 'active', 'Chidi Nwosu · 08051112233', 1, 'staff-demo');
+mkStaff('Tunde Bakare', 'tunde@besconpaints.com', '08072223344', 'sales', 'Field Sales Rep', 210000, 'Access Bank · 0987654321', 8, 'Hygeia Silver', 'orientation', 'Folake Bakare · 08062223344', 0, null);
+mkStaff('Funmi Adeyemi', 'funmi@besconpaints.com', '08083334455', 'support', 'Support Lead', 250000, 'Zenith Bank · 0111222333', 8, 'AXA Mansard Basic', 'active', 'Segun Adeyemi · 08073334455', 0, null);
+mkStaff('Ibrahim Musa', 'ibrahim@besconpaints.com', '08094445566', 'inventory', 'Store Manager', 230000, 'First Bank · 0222333444', 8, 'AXA Mansard Basic', 'active', 'Aisha Musa · 08084445566', 0, null);
+mkStaff('Ngozi Okafor', 'ngozi@besconpaints.com', '08105556677', 'hr', 'HR Officer', 280000, 'UBA · 0333444555', 8, 'Hygeia Gold', 'documents', 'Emeka Okafor · 08095556677', 0, null);
+mkStaff('Yemi Alade', 'yemi@besconpaints.com', '08116667788', 'account', 'Accountant', 300000, 'Stanbic · 0444555666', 8, 'Hygeia Gold', 'invited', 'Bisi Alade · 08107778899', 0, null);
+
+const st = (email) => db.prepare('SELECT id FROM staff WHERE email = ?').get(email).id;
+db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('tunde@besconpaints.com'), 60000, 'School fees', 'pending');
+db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('funmi@besconpaints.com'), 45000, 'Medical', 'approved');
+db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('adaeze@besconpaints.com'), 80000, 'Family emergency', 'repaid');
+db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('funmi@besconpaints.com'), 'annual', '2026-12-05', '2026-12-12', 'pending');
+db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('ibrahim@besconpaints.com'), 'sick', '2026-11-18', '2026-11-19', 'approved');
+
+console.log('Seeded HR module (staff, advances, leave).');
