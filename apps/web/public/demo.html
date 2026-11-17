@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OmniCRM — Invitation</title>
+  <style>
+    :root { --accent: #0b8f5c; --line: #e3e9e5; --ink: #17251e; --soft: #5d6d66; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: "DM Sans", system-ui, sans-serif; background: linear-gradient(180deg, #f0f8f3 0%, #fbfcf9 100%); color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 8px 24px -12px rgba(20,36,28,0.18); width: 100%; max-width: 420px; padding: 30px 26px; text-align: center; }
+    .mark { width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, var(--accent), #12b57b); display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 26px; margin: 0 auto 16px; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    p { color: var(--soft); font-size: 14px; line-height: 1.6; }
+    .btn { display: block; width: 100%; margin-top: 20px; padding: 14px; border: 0; border-radius: 12px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; text-decoration: none; }
+    .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+    .err h1 { color: #c0392b; }
+    .hint { font-size: 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="app"><p>Checking your invitation…</p></div>
+  <script>
+    const token = new URLSearchParams(location.search).get('token');
+    const el = document.getElementById('app');
+    (async () => {
+      if (!token) {
+        el.innerHTML = '<div class="mark">O</div><h1>OmniCRM</h1><p>This invitation link is incomplete.</p>';
+        return;
+      }
+      try {
+        const res = await fetch('/api/demo/' + encodeURIComponent(token));
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        localStorage.setItem('omnicrm_demo', JSON.stringify({ token, at: Date.now() }));
+        el.innerHTML = `
+          <div class="mark">O</div>
+          <h1>You've been invited to try OmniCRM</h1>
+          <p>${data.label ? `Invitation: ${data.label}. ` : ''}The all-in-one CRM for Nigerian businesses — sales, WhatsApp inbox, invoicing, inventory, HR, payroll and AI reports in one place.</p>
+          <a class="btn" href="/">Enter the demo →</a>
+          <p class="hint">Demo account: grant@besconpaints.com / omnicrm-demo</p>`;
+      } catch {
+        el.innerHTML = '<div class="mark">O</div><h1>This invitation has expired</h1><p>The person who shared this link has ended access to this demo. If you believe this is a mistake, ask them for a new link.</p>';
+      }
+    })();
+  </script>
+</body>
+</html>
