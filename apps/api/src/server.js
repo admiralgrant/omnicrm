@@ -915,6 +915,165 @@ app.put('/leaves/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, re
   return { leave: db.prepare('SELECT * FROM leaves WHERE id = ?').get(req.params.id) };
 });
 
+// ---- payroll runs + payslips ----
+const payeMonthly = (gross) => {
+  // Simplified Nigerian PAYE: annualize, reliefs (CRA = 200k + 20% of gross, pension 8%), band tax
+  const annual = gross * 12;
+  const pensionAnnual = annual * 0.08;
+  const cra = 200000 + annual * 0.20;
+  const taxable = Math.max(0, annual - pensionAnnual - cra);
+  const bands = [[300000, 0.07], [300000, 0.11], [500000, 0.15], [500000, 0.19], [1600000, 0.21], [Infinity, 0.24]];
+  let tax = 0, rest = taxable;
+  for (const [cap, rate] of bands) {
+    if (rest <= 0) break;
+    const slice = Math.min(rest, cap);
+    tax += slice * rate;
+    rest -= slice;
+  }
+  return Math.round(tax / 12);
+};
+
+app.post('/payroll/runs', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const period = req.body?.period || new Date().toISOString().slice(0, 7);
+  const existing = db.prepare('SELECT id FROM payroll_runs WHERE user_id = ? AND period = ?').get(req.user.id, period);
+  if (existing) return reply.code(400).send({ error: `A payroll run for ${period} already exists.` });
+  const staff = db.prepare("SELECT * FROM staff WHERE user_id = ? AND status = 'active'").all(req.user.id);
+  let totalGross = 0, totalPension = 0, totalPaye = 0, totalNet = 0;
+  const info = db.prepare('INSERT INTO payroll_runs (user_id, period) VALUES (?, ?)').run(req.user.id, period);
+  const runId = info.lastInsertRowid;
+  for (const s of staff) {
+    const gross = s.salary;
+    const pension = Math.round(gross * 0.08);
+    const paye = payeMonthly(gross);
+    const net = gross - pension - paye;
+    db.prepare('INSERT INTO payslips (user_id, run_id, staff_id, gross, pension, paye, net) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(req.user.id, runId, s.id, gross, pension, paye, net);
+    totalGross += gross; totalPension += pension; totalPaye += paye; totalNet += net;
+  }
+  db.prepare('UPDATE payroll_runs SET total_gross = ?, total_pension = ?, total_paye = ?, total_net = ? WHERE id = ?')
+    .run(totalGross, totalPension, totalPaye, totalNet, runId);
+  return { run: db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(runId), payslips: staff.length };
+});
+
+app.get('/payroll/runs', { preHandler: [requireAuth, gate('hr')] }, async (req) => {
+  return { runs: db.prepare('SELECT * FROM payroll_runs WHERE user_id = ? ORDER BY id DESC').all(req.user.id) };
+});
+
+app.get('/payroll/runs/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const run = db.prepare('SELECT * FROM payroll_runs WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!run) return reply.code(404).send({ error: 'Run not found' });
+  const slips = db.prepare('SELECT p.*, s.name, s.department, s.role FROM payslips p JOIN staff s ON s.id = p.staff_id WHERE p.run_id = ?').all(run.id);
+  return { run, payslips: slips };
+});
+
+app.put('/payroll/runs/:id', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
+  const run = db.prepare('SELECT * FROM payroll_runs WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!run) return reply.code(404).send({ error: 'Run not found' });
+  const { status } = req.body || {};
+  if (!['draft', 'approved', 'paid'].includes(status)) return reply.code(400).send({ error: 'status must be draft, approved or paid' });
+  db.prepare('UPDATE payroll_runs SET status = ? WHERE id = ?').run(status, run.id);
+  if (status === 'paid') db.prepare('UPDATE payslips SET status = ? WHERE run_id = ?').run('paid', run.id);
+  return { run: db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(run.id) };
+});
+
+app.get('/payslips/:id/pdf', { preHandler: requireAuth }, async (req, reply) => {
+  const slip = db.prepare('SELECT p.*, s.name, s.role, s.department, s.bank, r.period FROM payslips p JOIN staff s ON s.id = p.staff_id JOIN payroll_runs r ON r.id = p.run_id WHERE p.id = ?').get(req.params.id);
+  if (!slip) return reply.code(404).send({ error: 'Payslip not found' });
+  // owner OR the staff member themselves
+  if (req.user.dept && req.user.staff_id !== slip.staff_id) return reply.code(403).send({ error: 'Not your payslip' });
+  const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  reply.header('Content-Type', 'application/pdf');
+  reply.header('Content-Disposition', `attachment; filename="Payslip-${slip.period}-${slip.name.replace(/\s+/g, '-')}.pdf"`);
+  doc.pipe(reply.raw);
+  doc.fontSize(20).font('Helvetica-Bold').text('PAYSLIP', { characterSpacing: 2 });
+  doc.moveDown(0.3).fontSize(10).font('Helvetica').fillColor('#444').text(`Period: ${slip.period}`, { align: 'right' });
+  doc.moveDown(0.6);
+  doc.fontSize(11).font('Helvetica-Bold').fillColor('#000').text(slip.name);
+  doc.fontSize(10).font('Helvetica').fillColor('#555').text(`${slip.role} · ${slip.department} · ${slip.bank || ''}`);
+  doc.moveDown(1);
+  const rows = [
+    ['Gross salary', slip.gross, false],
+    ['Pension (8% staff)', slip.pension, true],
+    ['PAYE tax', slip.paye, true],
+    ['Other deductions', slip.other_deductions, true],
+    ['NET PAY', slip.net, false],
+  ];
+  let y = doc.y;
+  for (const [label, val, minus] of rows) {
+    doc.fontSize(10).font(minus ? 'Helvetica' : 'Helvetica-Bold').fillColor(minus ? '#555' : '#000')
+      .text(label, 56, y)
+      .text(`${minus ? '−' : ''}₦${Number(val).toLocaleString()}`, 400, y, { width: 130, align: 'right' });
+    y += 22;
+  }
+  doc.moveDown(2).fontSize(8).fillColor('#888').text('Simplified PAYE — generated by OmniCRM. This is a demo payslip.', { align: 'center' });
+  doc.end();
+});
+
+// ---- staff self-service portal ----
+app.get('/me/portal', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.staff_id) return reply.code(403).send({ error: 'Staff only' });
+  const staff = db.prepare('SELECT * FROM staff WHERE id = ?').get(req.user.staff_id);
+  if (!staff) return reply.code(404).send({ error: 'Staff record not found' });
+  const payslips = db.prepare('SELECT p.*, r.period FROM payslips p JOIN payroll_runs r ON r.id = p.run_id WHERE p.staff_id = ? ORDER BY p.id DESC').all(staff.id);
+  const advances = db.prepare('SELECT * FROM salary_advances WHERE staff_id = ? ORDER BY id DESC').all(staff.id);
+  const leaves = db.prepare('SELECT * FROM leaves WHERE staff_id = ? ORDER BY id DESC').all(staff.id);
+  const today = new Date().toISOString().slice(0, 10);
+  const attendance = db.prepare('SELECT * FROM attendance WHERE staff_id = ? AND date = ?').all(staff.id, today);
+  return { staff, payslips, advances, leaves, today_attendance: attendance };
+});
+
+app.post('/me/advances', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.staff_id) return reply.code(403).send({ error: 'Staff only' });
+  const { amount, reason } = req.body || {};
+  if (!amount) return reply.code(400).send({ error: 'amount is required' });
+  const info = db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason) VALUES (?, ?, ?, ?)')
+    .run(req.user.id, req.user.staff_id, Number(amount), reason || null);
+  return { advance: db.prepare('SELECT * FROM salary_advances WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.post('/me/leaves', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.staff_id) return reply.code(403).send({ error: 'Staff only' });
+  const { type, start_date, end_date } = req.body || {};
+  if (!start_date || !end_date) return reply.code(400).send({ error: 'start_date and end_date are required' });
+  const info = db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, req.user.staff_id, type || 'annual', start_date, end_date);
+  return { leave: db.prepare('SELECT * FROM leaves WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+// ---- attendance / clock-in ----
+app.get('/attendance', { preHandler: requireAuth }, async (req) => {
+  const date = req.query?.date || new Date().toISOString().slice(0, 10);
+  const rows = db.prepare('SELECT a.*, s.name, s.department FROM attendance a JOIN staff s ON s.id = a.staff_id WHERE a.user_id = ? AND a.date = ? ORDER BY a.id DESC').all(req.user.id, date);
+  return { date, attendance: rows };
+});
+
+app.post('/attendance/clock-in', { preHandler: requireAuth }, async (req, reply) => {
+  const staffId = req.user.staff_id || req.body?.staff_id;
+  if (!staffId) return reply.code(400).send({ error: 'staff_id is required' });
+  const today = new Date().toISOString().slice(0, 10);
+  const existing = db.prepare('SELECT * FROM attendance WHERE staff_id = ? AND date = ?').get(staffId, today);
+  if (existing && existing.clock_in) return reply.code(400).send({ error: 'Already clocked in today' });
+  const now = new Date().toISOString().slice(11, 16);
+  if (existing) {
+    db.prepare('UPDATE attendance SET clock_in = ? WHERE id = ?').run(now, existing.id);
+    return { attendance: db.prepare('SELECT * FROM attendance WHERE id = ?').get(existing.id) };
+  }
+  const staff = db.prepare('SELECT user_id FROM staff WHERE id = ?').get(staffId);
+  const info = db.prepare('INSERT INTO attendance (user_id, staff_id, date, clock_in) VALUES (?, ?, ?, ?)')
+    .run(staff.user_id, staffId, today, now);
+  return { attendance: db.prepare('SELECT * FROM attendance WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.post('/attendance/clock-out', { preHandler: requireAuth }, async (req, reply) => {
+  const staffId = req.user.staff_id || req.body?.staff_id;
+  if (!staffId) return reply.code(400).send({ error: 'staff_id is required' });
+  const today = new Date().toISOString().slice(0, 10);
+  const existing = db.prepare('SELECT * FROM attendance WHERE staff_id = ? AND date = ?').get(staffId, today);
+  if (!existing || !existing.clock_in) return reply.code(400).send({ error: 'Not clocked in today' });
+  db.prepare('UPDATE attendance SET clock_out = ? WHERE id = ?').run(new Date().toISOString().slice(11, 16), existing.id);
+  return { attendance: db.prepare('SELECT * FROM attendance WHERE id = ?').get(existing.id) };
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
 
