@@ -1218,6 +1218,13 @@ app.delete('/demo-links/:id', { preHandler: requireAuth }, async (req, reply) =>
   return { ok: true, revoked: existing.label || existing.token };
 });
 
+app.get('/me/contacts', { preHandler: requireAuth }, async (req) => {
+  const isOps = !req.user.dept || req.user.dept === 'account' || req.user.dept === 'hr';
+  const rows = db.prepare('SELECT * FROM contacts WHERE user_id = ? ORDER BY company').all(req.user.id)
+    .filter((c) => isOps || c.staff_id === req.user.staff_id);
+  return { rows };
+});
+
 // ---- sales order workflow: reps raise orders, ops approves -> invoice -> delivery -> payment ----
 const isOps = (u) => !u.dept || u.dept === 'account' || u.dept === 'hr';
 
