@@ -485,30 +485,42 @@ export default function App() {
             </div>
             <div className="notif-bar">
               <button className="pill notif-pill" onClick={() => setNotifOpen(!notifOpen)}>
-                🔔 Notifications{notifs.filter((n) => !n.read).length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read).length}</b>}
+                🔔 Notifications{!notifOpen && notifs.filter((n) => !n.read).length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read).length}</b>}{notifOpen && <b className="notif-badge">✕</b>}
               </button>
+              {notifOpen && <div className="notif-backdrop" onClick={() => setNotifOpen(false)} />}
               {notifOpen && (
                 <div className="notif-panel">
                   <div className="inv-head" style={{ marginBottom: 6 }}>
                     <b>Notifications</b>
                     <button className="btn-ghost sm" onClick={async () => { await api('/notifications/read', { method: 'POST' }); setNotifs((await api('/notifications')).rows); }}>Mark all read</button>
+                    <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={() => setNotifOpen(false)}>✕ Close</button>
                   </div>
                   {notifs.map((n) => (
-                    <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1, cursor: n.link ? 'pointer' : 'default' }}
+                    <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1, cursor: 'pointer' }}
                       onClick={async () => {
                         const link = n.link;
-                        if (!link) return;
                         try {
-                          if (link.view === 'mail') {
+                          if (link) {
+                            if (link.view === 'mail') {
+                              setView('mail');
+                              if (link.id) setActiveConv(await api(`/chat/conversations/${link.id}`));
+                            } else if (link.view === 'orders') {
+                              setView('orders');
+                            } else if (link.view === 'invoices') {
+                              setView('invoices');
+                            } else if (link.view === 'dashboard') {
+                              setView('dashboard');
+                              setDept(link.dept || 'sales');
+                            }
+                          } else if (n.kind === 'mention') {
+                            // older mention without a link — still open the chat
                             setView('mail');
-                            if (link.id) setActiveConv(await api(`/chat/conversations/${link.id}`));
-                          } else if (link.view === 'orders') {
-                            setView('orders');
-                          } else if (link.view === 'invoices') {
-                            setView('invoices');
-                          } else if (link.view === 'dashboard') {
-                            setView('dashboard');
-                            setDept(link.dept || 'sales');
+                          } else {
+                            // fallback: no destination recorded, just mark read and close
+                            setNotifOpen(false);
+                            await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
+                            setNotifs((await api('/notifications')).rows);
+                            return;
                           }
                           setNotifOpen(false);
                           await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
