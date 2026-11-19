@@ -296,3 +296,9 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 .notif-line { cursor: default; }
 .notif-line:hover { background: #f0f7f2; border-radius: 8px; }
 .notif-backdrop { position: fixed; inset: 0; z-index: 39; }
+
+/* mobile forms: let labeled fields wrap instead of squeezing side-by-side */
+@media (max-width: 760px) {
+  .inv-item-row { flex-wrap: wrap; }
+  .inv-field { min-width: 170px; flex-grow: 1; }
+}
