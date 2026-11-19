@@ -103,6 +103,7 @@ export default function App() {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionedIds, setMentionedIds] = useState([]);
   const [mentionedGroups, setMentionedGroups] = useState([]);
+  const [receiptForm, setReceiptForm] = useState(null);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -1439,6 +1440,7 @@ export default function App() {
                         <div style={{ flex: 1 }}>
                           <b>{r.payer_name}</b> {r.amount_ngn && <span className="muted">· {fmt(r.amount_ngn)}</span>}
                           <div className="muted" style={{ fontSize: 12 }}>{r.contact_name}{r.rep_name && <> · rep: {r.rep_name}</>}</div>
+                          {r.receipt_body && <div style={{ marginTop: 4 }}><ReceiptThumb id={r.id} small /></div>}
                         </div>
                         <span className={`inv-tag ${r.status === 'matched' ? 'paid' : 'pending'}`}>{r.status}</span>
                         {opsMode && r.status === 'pending' && <button className="act-btn" onClick={async () => {
@@ -1449,15 +1451,43 @@ export default function App() {
                       </div>
                     ))}
                     {receipts.length === 0 && <p className="muted">No receipts yet.</p>}
-                    {!isGuest && <button className="btn-ghost sm" onClick={async () => {
-                      const contactId = Number(prompt('Customer ID (see Customers tab)'));
-                      if (!contactId) return;
-                      const payer = prompt('Who paid? (e.g. "Alhaja Tuku — Alhaja Enterprises")');
-                      if (!payer) return;
-                      const amt = Number(prompt('Amount (₦)') || 0);
-                      await api('/receipts', { method: 'POST', body: JSON.stringify({ contact_id: contactId, payer_name: payer, amount_ngn: amt }) });
-                      setReceipts((await api('/receipts')).rows);
-                    }}>+ Upload receipt</button>}
+                    {!isGuest && <button className="btn-ghost sm" onClick={() => setReceiptForm({ contact_id: '', payer_name: '', amount_ngn: 0, image_data_url: null })}>+ Upload receipt</button>}
+                    {receiptForm && (
+                      <div style={{ background: '#fff', border: '1px solid var(--line)', borderRadius: 10, padding: 12, marginTop: 8 }}>
+                        <div className="inv-item-row">
+                          <select value={receiptForm.contact_id} onChange={(e) => setReceiptForm({ ...receiptForm, contact_id: e.target.value })}>
+                            <option value="">Customer…</option>
+                            {(opsMode ? contacts : myContacts).map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="inv-item-row">
+                          <input placeholder="Who paid? (e.g. Alhaja Tuku — Alhaja Enterprises)" value={receiptForm.payer_name} onChange={(e) => setReceiptForm({ ...receiptForm, payer_name: e.target.value })} />
+                          <input type="number" placeholder="Amount ₦" style={{ width: 120 }} value={receiptForm.amount_ngn} onChange={(e) => setReceiptForm({ ...receiptForm, amount_ngn: Number(e.target.value) })} />
+                        </div>
+                        <div className="inv-item-row">
+                          <input type="file" accept="image/*" onChange={(e) => {
+                            const f = e.target.files[0];
+                            if (!f) return;
+                            if (f.size > 8 * 1024 * 1024) { alert('Image too large (max 8MB)'); return; }
+                            const rd = new FileReader();
+                            rd.onload = () => setReceiptForm((rf) => ({ ...rf, image_data_url: rd.result }));
+                            rd.readAsDataURL(f);
+                          }} />
+                          {receiptForm.image_data_url && <img src={receiptForm.image_data_url} alt="receipt" style={{ height: 64, borderRadius: 8, border: '1px solid var(--line)' }} />}
+                        </div>
+                        <div className="inv-item-row">
+                          <button className="btn-primary sm" onClick={async () => {
+                            try {
+                              await api('/receipts', { method: 'POST', body: JSON.stringify(receiptForm) });
+                              setReceiptForm(null);
+                              setReceipts((await api('/receipts')).rows);
+                              setNotifs((await api('/notifications')).rows);
+                            } catch (e) { alert(e.message); }
+                          }}>Submit receipt</button>
+                          <button className="btn-ghost sm" onClick={() => setReceiptForm(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -1928,6 +1958,20 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function ReceiptThumb({ id, small }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(API + '/receipts/' + id + '/image', { headers: { Authorization: 'Bearer ' + localStorage.getItem(tokenKey) } })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b && alive) setUrl(URL.createObjectURL(b)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
+  if (!url) return null;
+  return <img src={url} alt="receipt" style={{ height: small ? 44 : 120, borderRadius: 8, border: '1px solid var(--line)', cursor: 'zoom-in' }} onClick={(e) => { e.stopPropagation(); window.open(url, '_blank'); }} />;
 }
 
 function Landing({ onLogin, onStart }) {
