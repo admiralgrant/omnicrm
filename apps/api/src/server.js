@@ -1493,18 +1493,37 @@ app.get('/orders', { preHandler: requireAuth }, async (req) => {
 
 app.post('/orders', { preHandler: requireAuth }, async (req, reply) => {
   if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
-  const { contact_id, items, note } = req.body || {};
-  if (!contact_id || !Array.isArray(items) || !items.length) {
-    return reply.code(400).send({ error: 'contact_id and items are required' });
-  }
+  const { contact_id, items, note, kind, payment_terms, description, amount_ngn } = req.body || {};
+  if (!contact_id) return reply.code(400).send({ error: 'contact_id is required' });
   const contact = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Customer not found' });
   // attribute to the rep who owns this customer (or the logged-in rep)
   const staffId = req.user.staff_id || contact.staff_id || null;
-  const total = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
-  const info = db.prepare(`INSERT INTO orders (user_id, staff_id, contact_id, items_json, total_ngn, status, note)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)`)
-    .run(req.user.id, staffId, contact_id, JSON.stringify(items), total, note || null);
+  const orderKind = kind === 'custom' ? 'custom' : 'catalog';
+  let itemsArr, total;
+  if (orderKind === 'custom') {
+    // customized order: free-form description + optional estimate value
+    total = Number(amount_ngn) || 0;
+    itemsArr = [{ name: description || 'Custom work', qty: 1, price: total }];
+  } else {
+    itemsArr = Array.isArray(items) ? items : [];
+    if (!itemsArr.length) return reply.code(400).send({ error: 'Add at least one catalog item' });
+    // auto-price catalog items from the product table (price comes from the CRM, not the rep)
+    total = 0;
+    for (const it of itemsArr) {
+      const prod = db.prepare('SELECT * FROM products WHERE id = ? AND user_id = ?').get(it.product_id, req.user.id);
+      if (!prod) return reply.code(404).send({ error: `Product ${it.product_id} not found` });
+      const price = Number(prod.unit_price) || 0;
+      const qty = Number(it.qty) || 0;
+      it.name = prod.name;
+      it.price = price;
+      it.sku = prod.sku;
+      total += price * qty;
+    }
+  }
+  const info = db.prepare(`INSERT INTO orders (user_id, staff_id, contact_id, items_json, total_ngn, status, note, kind, payment_terms)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
+    .run(req.user.id, staffId, contact_id, JSON.stringify(itemsArr), total, note || null, orderKind, payment_terms || null);
   const rep = staffId ? db.prepare('SELECT name FROM staff WHERE id = ?').get(staffId) : null;
   notify(req.user.id, null, 'order_raised',
     `New order #${info.lastInsertRowid} for ${contact.company || contact.name} (${total.toLocaleString()} naira)${rep ? ' from ' + rep.name : ''} awaits approval.`,
