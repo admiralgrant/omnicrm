@@ -331,6 +331,7 @@ CREATE TABLE IF NOT EXISTS mail_messages (
   sender_staff_id INTEGER,
   body TEXT NOT NULL,
   mentions_json TEXT NOT NULL DEFAULT '[]', -- staff ids tagged
+  groups_json TEXT NOT NULL DEFAULT '[]',  -- dept groups tagged
   attachment_path TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -362,5 +363,9 @@ CREATE INDEX IF NOT EXISTS idx_mail_threads_user ON mail_threads(user_id);
 CREATE INDEX IF NOT EXISTS idx_mail_msgs_thread ON mail_messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_staff ON payment_receipts(staff_id);
 `);
+
+// migration: groups_json on mail_messages (dept-group mentions)
+const mmCols = db.prepare("PRAGMA table_info(mail_messages)").all().map((c) => c.name);
+if (!mmCols.includes('groups_json')) db.exec("ALTER TABLE mail_messages ADD COLUMN groups_json TEXT NOT NULL DEFAULT '[]'");
 
 export default db;
