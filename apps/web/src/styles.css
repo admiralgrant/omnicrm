@@ -302,3 +302,10 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .inv-item-row { flex-wrap: wrap; }
   .inv-field { min-width: 170px; flex-grow: 1; }
 }
+.order-line { display: flex; gap: 10px; align-items: flex-end; border-bottom: 1px dashed #e3e9e5; padding: 10px 0; }
+.order-line .inv-field { margin-bottom: 0; }
+.remove-line { color: #c0392b; flex-shrink: 0; margin-bottom: 2px; }
+@media (max-width: 760px) {
+  .order-line { flex-wrap: wrap; }
+  .order-line .inv-field { min-width: 140px; }
+}
