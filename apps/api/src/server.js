@@ -1225,14 +1225,111 @@ app.get('/me/contacts', { preHandler: requireAuth }, async (req) => {
   return { rows };
 });
 
-// ---- sales order workflow: reps raise orders, ops approves -> invoice -> delivery -> payment ----
+// internal mail / stock / receipts use the same ops gate as orders — declare it up front
 const isOps = (u) => !u.dept || u.dept === 'account' || u.dept === 'hr';
-
 const notify = (userId, staffId, kind, message) => {
   db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (?, ?, ?, ?)')
     .run(userId || null, staffId || null, kind, message);
 };
 
+// ---- internal mail (teams): threads, @mentions, and an order/approve/payment stream ----
+const staffName = (id) => id ? (db.prepare('SELECT name FROM staff WHERE id = ?').get(id)?.name || null) : null;
+
+app.get('/mail/threads', { preHandler: requireAuth }, async (req) => {
+  // everyone in the org sees the org's team threads (scoped messaging is per-invoice, enforced at the order/invoice layer)
+  const threads = db.prepare('SELECT * FROM mail_threads WHERE user_id = ? ORDER BY pinned DESC, id DESC LIMIT 60').all(req.user.id);
+  return { threads };
+});
+
+app.get('/mail/threads/:id', { preHandler: requireAuth }, async (req) => {
+  const t = db.prepare('SELECT * FROM mail_threads WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!t) return reply.code(404).send({ error: 'Thread not found' });
+  const messages = db.prepare('SELECT m.*, s.name AS sender_name FROM mail_messages m LEFT JOIN staff s ON s.id = m.sender_staff_id WHERE m.thread_id = ? ORDER BY m.id ASC').all(t.id)
+    .map((m) => ({ ...m, mentions: JSON.parse(m.mentions_json || '[]') }));
+  return { thread: t, messages };
+});
+
+app.post('/mail/threads', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  const { subject, kind, ref_id } = req.body || {};
+  const info = db.prepare('INSERT INTO mail_threads (user_id, subject, kind, ref_id) VALUES (?, ?, ?, ?)')
+    .run(req.user.id, subject || null, kind || 'note', ref_id || null);
+  return { ok: true, id: info.lastInsertRowid };
+});
+
+app.post('/mail/threads/:id/messages', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  const t = db.prepare('SELECT * FROM mail_threads WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!t) return reply.code(404).send({ error: 'Thread not found' });
+  const { body, mentions } = req.body || {};
+  if (!body || !body.trim()) return reply.code(400).send({ error: 'Message body is required' });
+  const mentionsArr = Array.isArray(mentions) ? mentions : [];
+  const info = db.prepare('INSERT INTO mail_messages (thread_id, sender_staff_id, body, mentions_json) VALUES (?, ?, ?, ?)')
+    .run(t.id, req.user.staff_id || null, body, JSON.stringify(mentionsArr));
+  // notify mentioned staff
+  for (const sid of mentionsArr) {
+    if (sid === req.user.staff_id) continue;
+    const userName = req.user.name || 'Someone';
+    notify(req.user.id, sid, 'mention', `${userName} mentioned you: ${body.slice(0, 120)}`);
+  }
+  return { ok: true, id: info.lastInsertRowid };
+});
+
+// stock posts: inventory team posts daily levels; sales reps read them before raising orders
+app.get('/stock', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare('SELECT sp.*, s.name AS poster FROM stock_posts sp LEFT JOIN staff s ON s.id = sp.posted_by WHERE sp.user_id = ? ORDER BY sp.id DESC LIMIT 60').all(req.user.id);
+  return { posts: rows };
+});
+
+app.post('/stock', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  const { product_name, qty_on_hand, note } = req.body || {};
+  if (!product_name || qty_on_hand == null) return reply.code(400).send({ error: 'product_name and qty_on_hand required' });
+  const info = db.prepare('INSERT INTO stock_posts (user_id, product_name, qty_on_hand, posted_by, note) VALUES (?, ?, ?, ?, ?)')
+    .run(req.user.id, product_name, Number(qty_on_hand), req.user.staff_id || null, note || null);
+  // notify sales reps there's a fresh stock update
+  const reps = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'sales' AND can_login = 1").all(req.user.id);
+  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `Stock updated: ${product_name} — ${Number(qty_on_hand)} on hand.`);
+  return { ok: true, id: info.lastInsertRowid };
+});
+
+// payment receipts: rep uploads proof when a customer pays from another account
+app.post('/receipts', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  const { contact_id, payer_name, amount_ngn, note, receipt_name, receipt_body } = req.body || {};
+  if (!contact_id || !payer_name) return reply.code(400).send({ error: 'contact_id and payer_name are required' });
+  const info = db.prepare('INSERT INTO payment_receipts (user_id, contact_id, staff_id, payer_name, amount_ngn, note, receipt_name, receipt_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, req.user.staff_id || null, payer_name, amount_ngn || null, note || null, receipt_name || null, receipt_body || null);
+  const c = db.prepare('SELECT company FROM contacts WHERE id = ?').get(contact_id);
+  notify(req.user.id, null, 'receipt', `New payment receipt from ${payer_name} (${c?.company || 'customer'}) awaits matching by accounts.`);
+  return { ok: true, id: info.lastInsertRowid };
+});
+
+app.get('/receipts', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare('SELECT r.*, c.company, c.name AS contact_name, s.name AS rep_name FROM payment_receipts r LEFT JOIN contacts c ON c.id = r.contact_id LEFT JOIN staff s ON s.id = r.staff_id WHERE r.user_id = ? ORDER BY r.id DESC LIMIT 60').all(req.user.id)
+    .filter((r) => isOps(req.user) || r.staff_id === req.user.staff_id);
+  return { rows };
+});
+
+app.post('/receipts/:id/match', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can match receipts' });
+  const r = db.prepare('SELECT * FROM payment_receipts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!r) return reply.code(404).send({ error: 'Receipt not found' });
+  const { invoice_id } = req.body || {};
+  db.prepare('UPDATE payment_receipts SET status = ?, matched_invoice_id = ? WHERE id = ?').run('matched', invoice_id || null, r.id);
+  if (invoice_id) {
+    db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ? AND user_id = ?").run(invoice_id, req.user.id);
+    const inv = db.prepare('SELECT contact_id, ngn_total FROM invoices WHERE id = ?').get(invoice_id);
+    const order = db.prepare('SELECT id FROM orders WHERE invoice_id = ?').get(invoice_id);
+    if (order) {
+      db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(`receipt-${r.id}`, order.id);
+      notify(req.user.id, r.staff_id, 'payment_received', `Payment matched for invoice #${invoice_id} — receipt from ${r.payer_name}.`);
+    }
+  }
+  return { ok: true };
+});
+
+// ---- sales order workflow: reps raise orders, ops approves -> invoice -> delivery -> payment ----
 app.get('/orders', { preHandler: requireAuth }, async (req) => {
   const rows = db.prepare(`SELECT o.*, c.company, c.name AS contact_name, s.name AS rep_name
     FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id LEFT JOIN staff s ON s.id = o.staff_id
