@@ -1245,9 +1245,9 @@ app.get('/me/contacts', { preHandler: requireAuth }, async (req) => {
 
 // internal mail / stock / receipts use the same ops gate as orders — declare it up front
 const isOps = (u) => !u.dept || u.dept === 'account' || u.dept === 'hr';
-const notify = (userId, staffId, kind, message) => {
-  db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (?, ?, ?, ?)')
-    .run(userId || null, staffId || null, kind, message);
+const notify = (userId, staffId, kind, message, link) => {
+  db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message, link_json) VALUES (?, ?, ?, ?, ?)')
+    .run(userId || null, staffId || null, kind, message, link ? JSON.stringify(link) : null);
 };
 
 // ---- internal mail (teams): threads, @mentions, and an order/approve/payment stream ----
@@ -1328,7 +1328,7 @@ app.post('/chat/conversations/:id/messages', { preHandler: requireAuth }, async 
   // notify mentioned
   for (const sid of resolved) {
     if (sid === req.user.staff_id) continue;
-    notify(req.user.id, sid, 'mention', `${req.user.name || 'Someone'} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`);
+    notify(req.user.id, sid, 'mention', `${req.user.name || 'Someone'} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`, { view: 'mail', id: c.id });
   }
   return { ok: true, id: info.lastInsertRowid };
 });
@@ -1385,7 +1385,7 @@ app.post('/mail/threads/:id/messages', { preHandler: requireAuth }, async (req, 
   for (const sid of resolved) {
     if (sid === req.user.staff_id) continue;
     const userName = req.user.name || 'Someone';
-    notify(req.user.id, sid, 'mention', `${userName} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`);
+    notify(req.user.id, sid, 'mention', `${userName} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`, { view: 'mail', id: t.id });
   }
   return { ok: true, id: info.lastInsertRowid };
 });
@@ -1410,7 +1410,7 @@ app.post('/stock', { preHandler: requireAuth }, async (req, reply) => {
     .run(req.user.id, product_name, Number(qty_on_hand), req.user.staff_id || null, note || null);
   // notify sales reps there's a fresh stock update
   const reps = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'sales' AND can_login = 1").all(req.user.id);
-  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `Stock updated: ${product_name} — ${Number(qty_on_hand)} on hand.`);
+  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `Stock updated: ${product_name} — ${Number(qty_on_hand)} on hand.`, { view: 'dashboard', dept: 'inventory' });
   return { ok: true, id: info.lastInsertRowid };
 });
 
@@ -1435,7 +1435,7 @@ app.post('/receipts', { preHandler: requireAuth }, async (req, reply) => {
     db.prepare('UPDATE payment_receipts SET receipt_body = ? WHERE id = ?').run(file, info.lastInsertRowid);
   }
   const c = db.prepare('SELECT company FROM contacts WHERE id = ?').get(contact_id);
-  notify(req.user.id, null, 'receipt', `New payment receipt from ${payer_name} (${c?.company || 'customer'})${file ? ' with photo' : ''} awaits matching by accounts.`);
+  notify(req.user.id, null, 'receipt', `New payment receipt from ${payer_name} (${c?.company || 'customer'})${file ? ' with photo' : ''} awaits matching by accounts.`, { view: 'invoices', id: info.lastInsertRowid });
   return { ok: true, id: info.lastInsertRowid, has_image: !!file };
 });
 
@@ -1469,7 +1469,7 @@ app.post('/receipts/:id/match', { preHandler: requireAuth }, async (req, reply) 
     const order = db.prepare('SELECT id FROM orders WHERE invoice_id = ?').get(invoice_id);
     if (order) {
       db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(`receipt-${r.id}`, order.id);
-      notify(req.user.id, r.staff_id, 'payment_received', `Payment matched for invoice #${invoice_id} — receipt from ${r.payer_name}.`);
+      notify(req.user.id, r.staff_id, 'payment_received', `Payment matched for invoice #${invoice_id} — receipt from ${r.payer_name}.`, { view: 'invoices', id: invoice_id });
     }
   }
   return { ok: true };
@@ -1500,7 +1500,8 @@ app.post('/orders', { preHandler: requireAuth }, async (req, reply) => {
     .run(req.user.id, staffId, contact_id, JSON.stringify(items), total, note || null);
   const rep = staffId ? db.prepare('SELECT name FROM staff WHERE id = ?').get(staffId) : null;
   notify(req.user.id, null, 'order_raised',
-    `New order #${info.lastInsertRowid} for ${contact.company || contact.name} (${total.toLocaleString()} naira)${rep ? ' from ' + rep.name : ''} awaits approval.`);
+    `New order #${info.lastInsertRowid} for ${contact.company || contact.name} (${total.toLocaleString()} naira)${rep ? ' from ' + rep.name : ''} awaits approval.`,
+    { view: 'orders', id: info.lastInsertRowid });
   return { ok: true, id: info.lastInsertRowid };
 });
 
@@ -1525,7 +1526,8 @@ app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) 
   db.prepare("UPDATE orders SET status = 'approved', invoice_id = ?, approved_at = datetime('now') WHERE id = ?")
     .run(inv.lastInsertRowid, o.id);
   notify(o.user_id, o.staff_id, 'order_approved',
-    `Order #${o.id} approved — invoice ${number} raised for ${contact.company || contact.name}.`);
+    `Order #${o.id} approved — invoice ${number} raised for ${contact.company || contact.name}.`,
+    { view: 'orders', id: o.id });
   return { ok: true, invoice: number };
 });
 
@@ -1534,7 +1536,7 @@ app.post('/orders/:id/reject', { preHandler: requireAuth }, async (req, reply) =
   const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!o) return reply.code(404).send({ error: 'Order not found' });
   db.prepare("UPDATE orders SET status = 'rejected' WHERE id = ?").run(o.id);
-  notify(o.user_id, o.staff_id, 'order_rejected', `Order #${o.id} was rejected.`);
+  notify(o.user_id, o.staff_id, 'order_rejected', `Order #${o.id} was rejected.`, { view: 'orders', id: o.id });
   return { ok: true };
 });
 
@@ -1546,7 +1548,8 @@ app.post('/orders/:id/deliver', { preHandler: requireAuth }, async (req, reply) 
   db.prepare("UPDATE orders SET status = 'delivered', delivered_at = datetime('now') WHERE id = ?").run(o.id);
   if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'sent' WHERE id = ?").run(o.invoice_id);
   notify(o.user_id, o.staff_id, 'order_delivered',
-    `Order #${o.id} delivered — your invoice ${o.invoice_id ? '#' + o.invoice_id : ''} is now visible in your portal.`);
+    `Order #${o.id} delivered — your invoice ${o.invoice_id ? '#' + o.invoice_id : ''} is now visible in your portal.`,
+    { view: 'orders', id: o.id });
   return { ok: true };
 });
 
@@ -1558,14 +1561,16 @@ app.post('/orders/:id/payment', { preHandler: requireAuth }, async (req, reply) 
   db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(ref || null, o.id);
   if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ?").run(o.invoice_id);
   notify(o.user_id, o.staff_id, 'payment_received',
-    `Payment received for order #${o.id} (${o.total_ngn.toLocaleString()} naira)${ref ? ' — ref ' + ref : ''}.`);
+    `Payment received for order #${o.id} (${o.total_ngn.toLocaleString()} naira)${ref ? ' — ref ' + ref : ''}.`,
+    { view: 'orders', id: o.id });
   return { ok: true };
 });
 
 app.get('/notifications', { preHandler: requireAuth }, async (req) => {
   const rows = db.prepare(`SELECT * FROM notifications
     WHERE (staff_id = ? OR (staff_id IS NULL AND user_id = ?)) ORDER BY id DESC LIMIT 40`)
-    .all(req.user.staff_id || null, req.user.id);
+    .all(req.user.staff_id || null, req.user.id)
+    .map((n) => ({ ...n, link: n.link_json ? JSON.parse(n.link_json) : null }));
   return { rows };
 });
 
