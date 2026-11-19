@@ -97,6 +97,12 @@ export default function App() {
   const [mailThread, setMailThread] = useState(null);
   const [stockPosts, setStockPosts] = useState([]);
   const [receipts, setReceipts] = useState([]);
+  const [mentionStaff, setMentionStaff] = useState([]);
+  const [mentionGroups] = useState(['sales', 'support', 'inventory', 'hr', 'account']);
+  const [mailDraft, setMailDraft] = useState('');
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionedIds, setMentionedIds] = useState([]);
+  const [mentionedGroups, setMentionedGroups] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -130,6 +136,7 @@ export default function App() {
         try { setMailThreads((await api('/mail/threads')).threads); } catch { /* n/a */ }
         try { setStockPosts((await api('/stock')).posts); } catch { /* n/a */ }
         try { setReceipts((await api('/receipts')).rows); } catch { /* n/a */ }
+        try { setMentionStaff((await api('/staff/mentions')).staff); } catch { /* n/a */ }
         if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
@@ -1465,14 +1472,41 @@ export default function App() {
                 ))}
                 {mailThread.messages.length === 0 && <p className="muted">No messages yet.</p>}
                 <div className="composer" style={{ marginTop: 12 }}>
-                  <input placeholder="Type a message… @mention by staff ID" onKeyDown={async (e) => {
-                    if (e.key === 'Enter' && e.target.value.trim()) {
-                      await api(`/mail/threads/${mailThread.thread.id}/messages`, { method: 'POST', body: JSON.stringify({ body: e.target.value.trim(), mentions: [] }) });
-                      e.target.value = '';
-                      setMailThread(await api(`/mail/threads/${mailThread.thread.id}`));
-                    }
-                  }} />
-                  <span className="muted" style={{ fontSize: 11, marginTop: 6 }}>This keeps team talk inside OmniCRM — no WhatsApp/Slack needed.</span>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      placeholder="Type a message… type @ to mention a person or a team"
+                      value={mailDraft}
+                      onChange={(e) => { setMailDraft(e.target.value); setMentionOpen(e.target.value.endsWith('@')); }}
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Enter' && mailDraft.trim() && !mentionOpen) {
+                          const body = mailDraft.replace(/@$/, '').trim();
+                          await api(`/mail/threads/${mailThread.thread.id}/messages`, { method: 'POST', body: JSON.stringify({ body, mentions: mentionedIds, groups: mentionedGroups }) });
+                          setMailDraft(''); setMentionedIds([]); setMentionedGroups([]);
+                          setMailThread(await api(`/mail/threads/${mailThread.thread.id}`));
+                        }
+                      }}
+                    />
+                    {mentionOpen && (
+                      <div className="mention-pop">
+                        <div className="mention-head">Tap to mention</div>
+                        {mentionGroups.map((g) => (
+                          <div key={g} className="mention-item" onClick={() => { setMentionedGroups([...new Set([...mentionedGroups, g])]); setMentionOpen(false); setMailDraft((d) => d.replace(/@$/, '') + '@' + g + ' '); }}>
+                            👥 @{g} (whole team)
+                          </div>
+                        ))}
+                        {mentionStaff.map((s) => (
+                          <div key={s.id} className="mention-item" onClick={() => { setMentionedIds([...new Set([...mentionedIds, s.id])]); setMentionOpen(false); setMailDraft((d) => d.replace(/@$/, '') + '@' + s.name.split(' ')[0] + ' '); }}>
+                            {s.name} <span className="muted">· {s.department}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {(mentionedIds.length > 0 || mentionedGroups.length > 0) && (
+                    <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+                      Tagging: {mentionGroups.map((g) => '#' + g).join(' ')} {mentionedIds.map((id) => { const s = mentionStaff.find((x) => x.id === id); return s ? '@' + s.name.split(' ')[0] : ''; }).join(' ')}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
