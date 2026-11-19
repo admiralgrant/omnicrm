@@ -294,6 +294,8 @@ CREATE TABLE IF NOT EXISTS orders (
   total_ngn REAL NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
   note TEXT,
+  kind TEXT NOT NULL DEFAULT 'catalog',   -- catalog | custom
+  payment_terms TEXT,
   invoice_id INTEGER,
   payment_ref TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -313,6 +315,11 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_orders_staff ON orders(staff_id);
 CREATE INDEX IF NOT EXISTS idx_notif_staff ON notifications(staff_id);
 `);
+
+// migration: order kind + payment_terms columns
+const ordCols = db.prepare("PRAGMA table_info(orders)").all().map((c) => c.name);
+if (!ordCols.includes('kind')) db.exec("ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'catalog'");
+if (!ordCols.includes('payment_terms')) db.exec('ALTER TABLE orders ADD COLUMN payment_terms TEXT');
 
 // migration: internal mail (teams) — threads + messages + receipts + stock posts
 db.exec(`
