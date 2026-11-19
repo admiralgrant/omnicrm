@@ -310,3 +310,4 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .order-line .inv-field { min-width: 140px; }
 }
 .chat-contact { display: flex; align-items: center; gap: 10px; width: 100%; }
+.chat-section-head { padding: 12px 12px 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #8a9a91; }
