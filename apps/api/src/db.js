@@ -368,4 +368,27 @@ CREATE INDEX IF NOT EXISTS idx_receipts_staff ON payment_receipts(staff_id);
 const mmCols = db.prepare("PRAGMA table_info(mail_messages)").all().map((c) => c.name);
 if (!mmCols.includes('groups_json')) db.exec("ALTER TABLE mail_messages ADD COLUMN groups_json TEXT NOT NULL DEFAULT '[]'");
 
+// migration: modern chat interface — conversations (DMs + group channels)
+db.exec(`
+CREATE TABLE IF NOT EXISTS conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'group',     -- 'group' (general/team channel) | 'dm' (direct message)
+  title TEXT,
+  member_json TEXT NOT NULL DEFAULT '[]', -- staff ids in this conversation
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS conversation_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL,
+  sender_staff_id INTEGER,
+  body TEXT NOT NULL,
+  mentions_json TEXT NOT NULL DEFAULT '[]',
+  groups_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_convmsgs ON conversation_messages(conversation_id);
+`);
+
 export default db;
