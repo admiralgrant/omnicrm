@@ -112,6 +112,8 @@ export default function App() {
   const [chatMentioned, setChatMentioned] = useState([]);
   const [chatGroups, setChatGroups] = useState([]);
   const [dmPickerOpen, setDmPickerOpen] = useState(false);
+  const [channelPickerOpen, setChannelPickerOpen] = useState(false);
+  const [newChannelOpen, setNewChannelOpen] = useState(false);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -1546,17 +1548,51 @@ export default function App() {
               </div>
               {dmPickerOpen && (
                 <div className="dm-picker">
-                  <div className="mention-head">Message someone</div>
+                  <div className="mention-head">Start a conversation</div>
+                  <div className="mention-item" onClick={() => { setDmPickerOpen(false); setChannelPickerOpen(true); }}>
+                    👤 New chat <span className="muted">— message one person</span>
+                  </div>
+                  <div className="mention-item" onClick={() => { setDmPickerOpen(false); setNewChannelOpen(true); }}>
+                    # New channel <span className="muted">— group chat</span>
+                  </div>
+                </div>
+              )}
+              {channelPickerOpen && (
+                <div className="dm-picker">
+                  <div className="mention-head">New chat — pick a teammate</div>
                   {chatStaff.filter((s) => s.id !== jwtPayload()?.staff_id).map((s) => (
                     <div key={s.id} className="mention-item" onClick={async () => {
                       const r = await api('/chat/conversations', { method: 'POST', body: JSON.stringify({ kind: 'dm', with_staff_id: s.id }) });
                       setChatConvs((await api('/chat/conversations')).conversations);
                       setActiveConv(await api(`/chat/conversations/${r.id}`));
-                      setDmPickerOpen(false);
+                      setChannelPickerOpen(false);
                     }}>
-                      {s.name} <span className="muted">· {s.department}</span>
+                      <div className="chat-contact">
+                        <span className="thread-ava">{s.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}</span>
+                        <span style={{ flex: 1 }}>
+                          <b>{s.name}</b>
+                          <div className="muted" style={{ fontSize: 12 }}>{s.role || 'Staff'} · {s.department}</div>
+                        </span>
+                      </div>
                     </div>
                   ))}
+                </div>
+              )}
+              {newChannelOpen && (
+                <div className="dm-picker">
+                  <div className="mention-head">New channel</div>
+                  <div className="mention-item" style={{ padding: 10 }}>
+                    <input placeholder="Channel name (e.g. Procurement)" style={{ marginBottom: 8 }} onChange={(e) => { window.__channelName = e.target.value; }} />
+                    <button className="btn-primary sm" onClick={async () => {
+                      const title = window.__channelName;
+                      if (!title) { alert('Enter a channel name'); return; }
+                      const members = chatStaff.map((s) => s.id);
+                      const r = await api('/chat/conversations', { method: 'POST', body: JSON.stringify({ kind: 'group', title, members }) });
+                      setChatConvs((await api('/chat/conversations')).conversations);
+                      setActiveConv(await api(`/chat/conversations/${r.id}`));
+                      setNewChannelOpen(false);
+                    }}>Create channel</button>
+                  </div>
                 </div>
               )}
               {chatConvs.map((c) => (
