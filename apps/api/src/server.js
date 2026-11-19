@@ -1254,36 +1254,53 @@ const notify = (userId, staffId, kind, message, link) => {
 const staffName = (id) => id ? (db.prepare('SELECT name FROM staff WHERE id = ?').get(id)?.name || null) : null;
 
 // ---- modern chat interface: conversations (DMs + group channels) ----
-const myChats = (userId, staffId) => {
-  // all group channels + DMs where the staff is a member
+const myChats = (userId, staffId, userDept) => {
+  const me = staffId || 0; // owner (no staff row) is member id 0
   const convos = db.prepare('SELECT * FROM conversations WHERE user_id = ? ORDER BY id ASC').all(userId);
   return convos.filter((c) => {
-    if (c.kind === 'group') return true;           // everyone sees group channels
-    const members = JSON.parse(c.member_json || '[]');
-    return members.includes(staffId);              // DM only to its two members
+    if (c.kind === 'dm') {
+      const members = JSON.parse(c.member_json || '[]');
+      return members.includes(me);
+    }
+    if (c.dept) {
+      // department channel: members of that dept + owner (no dept) + HR
+      return !userDept || userDept === 'hr' || userDept === c.dept;
+    }
+    return true; // General + user-created channels: everyone
   }).map((c) => ({
     ...c,
     members: JSON.parse(c.member_json || '[]'),
-    // last message preview
     last: db.prepare('SELECT * FROM conversation_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1').get(c.id),
   }));
 };
 
+const canAccessConv = (c, req) => {
+  if (c.kind === 'dm') {
+    const members = JSON.parse(c.member_json || '[]');
+    return members.includes(req.user.staff_id || 0);
+  }
+  if (c.dept) return !req.user.dept || req.user.dept === 'hr' || req.user.dept === c.dept;
+  return true;
+};
+
 app.get('/chat/conversations', { preHandler: requireAuth }, async (req) => {
-  const staffList = db.prepare('SELECT id, name, department, role FROM staff WHERE user_id = ? ORDER BY name').all(req.user.id);
-  return { conversations: myChats(req.user.id, req.user.staff_id), staff: staffList };
+  const staffList = db.prepare('SELECT id, name, department, role FROM staff WHERE user_id = ? AND can_login = 1 ORDER BY name').all(req.user.id);
+  const owner = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
+  // owner pseudo-contact so people can DM the CEO
+  const contacts = req.user.dept
+    ? [{ id: 0, name: owner?.name || 'CEO', department: 'owner', role: 'CEO / Owner' }, ...staffList]
+    : staffList;
+  return { conversations: myChats(req.user.id, req.user.staff_id, req.user.dept), staff: contacts };
 });
 
 app.get('/chat/conversations/:id', { preHandler: requireAuth }, async (req, reply) => {
   const c = db.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!c) return reply.code(404).send({ error: 'Conversation not found' });
-  const members = JSON.parse(c.member_json || '[]');
-  if (c.kind === 'dm' && !members.includes(req.user.staff_id) && !isOps(req.user)) {
-    return reply.code(403).send({ error: 'Not in this conversation' });
-  }
+  if (!canAccessConv(c, req)) return reply.code(403).send({ error: 'Not in this conversation' });
+  const ownerName = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id)?.name || null;
   const messages = db.prepare('SELECT m.*, s.name AS sender_name FROM conversation_messages m LEFT JOIN staff s ON s.id = m.sender_staff_id WHERE m.conversation_id = ? ORDER BY m.id ASC').all(c.id)
-    .map((m) => ({ ...m, mentions: JSON.parse(m.mentions_json || '[]'), groups: JSON.parse(m.groups_json || '[]') }));
-  return { conversation: { ...c, members }, messages };
+    .map((m) => ({ ...m, mentions: JSON.parse(m.mentions_json || '[]'), groups: JSON.parse(m.groups_json || '[]'), sender_name: m.sender_name || (m.sender_staff_id === null ? ownerName : null) }));
+  return { conversation: { ...c, members: JSON.parse(c.member_json || '[]') }, messages };
 });
 
 // create a DM with another staff, or a group channel
@@ -1291,16 +1308,23 @@ app.post('/chat/conversations', { preHandler: requireAuth }, async (req, reply) 
   if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
   const { kind, with_staff_id, title, members } = req.body || {};
   if (kind === 'dm') {
-    if (!with_staff_id) return reply.code(400).send({ error: 'with_staff_id required for DM' });
-    if (with_staff_id === req.user.staff_id) return reply.code(400).send({ error: 'Cannot DM yourself' });
-    const other = db.prepare('SELECT id, name FROM staff WHERE id = ? AND user_id = ?').get(with_staff_id, req.user.id);
-    if (!other) return reply.code(404).send({ error: 'Staff not found' });
-    const mem = JSON.stringify([req.user.staff_id, with_staff_id].filter(Boolean).sort((a, b) => a - b));
+    if (with_staff_id === undefined || with_staff_id === null) return reply.code(400).send({ error: 'with_staff_id required for DM' });
+    const me = req.user.staff_id || 0;
+    if (with_staff_id === me) return reply.code(400).send({ error: 'Cannot DM yourself' });
+    let otherName;
+    if (with_staff_id === 0) {
+      otherName = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id)?.name || 'CEO';
+    } else {
+      const other = db.prepare('SELECT id, name FROM staff WHERE id = ? AND user_id = ?').get(with_staff_id, req.user.id);
+      if (!other) return reply.code(404).send({ error: 'Staff not found' });
+      otherName = other.name;
+    }
+    const mem = JSON.stringify([me, with_staff_id].sort((a, b) => a - b));
     // reuse existing DM if present
     const existing = db.prepare('SELECT * FROM conversations WHERE user_id = ? AND kind = ? AND member_json = ?').get(req.user.id, 'dm', mem);
     if (existing) return { ok: true, id: existing.id, reused: true };
     const info = db.prepare('INSERT INTO conversations (user_id, kind, title, member_json) VALUES (?, ?, ?, ?)')
-      .run(req.user.id, 'dm', other.name, mem);
+      .run(req.user.id, 'dm', otherName, mem);
     return { ok: true, id: info.lastInsertRowid };
   }
   // group channel
@@ -1314,6 +1338,7 @@ app.post('/chat/conversations/:id/messages', { preHandler: requireAuth }, async 
   if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
   const c = db.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!c) return reply.code(404).send({ error: 'Conversation not found' });
+  if (!canAccessConv(c, req)) return reply.code(403).send({ error: 'Not in this conversation' });
   const { body, mentions, groups } = req.body || {};
   if (!body || !body.trim()) return reply.code(400).send({ error: 'Message body is required' });
   const mentionsArr = Array.isArray(mentions) ? mentions : [];
@@ -1337,7 +1362,7 @@ app.post('/chat/conversations/:id/messages', { preHandler: requireAuth }, async 
   return { ok: true, id: info.lastInsertRowid };
 });
 
-// seed a "General" group channel on first access if none exists
+// seed "General" + one channel per department on first access if missing
 app.get('/chat/ensure-general', { preHandler: requireAuth }, async (req) => {
   const has = db.prepare("SELECT id FROM conversations WHERE user_id = ? AND kind = 'group' AND title = 'General'").get(req.user.id);
   if (!has) {
@@ -1345,7 +1370,18 @@ app.get('/chat/ensure-general', { preHandler: requireAuth }, async (req) => {
     db.prepare("INSERT INTO conversations (user_id, kind, title, member_json) VALUES (?, 'group', 'General', ?)")
       .run(req.user.id, JSON.stringify(staffIds));
   }
-  return { conversations: myChats(req.user.id, req.user.staff_id) };
+  // departmental channels: # Sales, # Support, # Inventory, # HR, # Account
+  const depts = ['sales', 'support', 'inventory', 'hr', 'account'];
+  const titles = { sales: 'Sales', support: 'Support', inventory: 'Inventory', hr: 'HR', account: 'Account' };
+  for (const d of depts) {
+    const exists = db.prepare('SELECT id FROM conversations WHERE user_id = ? AND dept = ?').get(req.user.id, d);
+    if (!exists) {
+      const members = db.prepare('SELECT id FROM staff WHERE user_id = ? AND department = ?').all(req.user.id, d).map((s) => s.id);
+      db.prepare("INSERT INTO conversations (user_id, kind, title, dept, member_json) VALUES (?, 'group', ?, ?, ?)")
+        .run(req.user.id, titles[d], d, JSON.stringify(members));
+    }
+  }
+  return { conversations: myChats(req.user.id, req.user.staff_id, req.user.dept) };
 });
 
 app.get('/mail/threads', { preHandler: requireAuth }, async (req) => {
