@@ -88,6 +88,11 @@ export default function App() {
   const [portalShifts, setPortalShifts] = useState([]);
   const [demoLinks, setDemoLinks] = useState([]);
   const [commissions, setCommissions] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [notifs, setNotifs] = useState([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [orderForm, setOrderForm] = useState(null);
+  const [myContacts, setMyContacts] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -115,6 +120,9 @@ export default function App() {
         try { setShifts((await api('/shifts')).shifts); } catch { /* non-HR */ }
         try { setDemoLinks((await api('/demo-links')).links); } catch { /* owner-only */ }
         try { setCommissions((await api('/commissions')).rows); } catch { /* n/a */ }
+        try { setOrders((await api('/orders')).rows); } catch { /* n/a */ }
+        try { setNotifs((await api('/notifications')).rows); } catch { /* n/a */ }
+        try { setMyContacts((await api('/me/contacts')).rows); } catch { /* n/a */ }
         if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
@@ -152,11 +160,11 @@ export default function App() {
   const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString();
 
   const FRONT_ACCESS = {
-    sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'pipeline'],
+    sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline'],
     support: ['dashboard', 'support', 'inbox', 'feedback', 'reports'],
     inventory: ['dashboard', 'inventory', 'product', 'reports'],
     hr: ['dashboard', 'hr', 'reports'],
-    account: ['dashboard', 'invoices', 'reports'],
+    account: ['dashboard', 'invoices', 'orders', 'reports'],
   };
   const allowed = (section) => {
     if (section === 'portal') return !!(me?.staff_id || me?.staff);
@@ -165,6 +173,7 @@ export default function App() {
     return (FRONT_ACCESS[me.dept] || []).includes(section);
   };
   const isGuest = !!me?.guest; // read-only demo session — hide admin/mutating controls
+  const opsMode = !me?.dept || me?.dept === 'account' || me?.dept === 'hr'; // can approve orders & post payments
 
   if (loading) return <div className="center">Loading…</div>;
 
@@ -405,6 +414,7 @@ export default function App() {
     ['customers', '👥', 'Customers'],
     ['inbox', '💬', 'Inbox'],
     ['invoices', '🧾', 'Invoicing'],
+    ['orders', '📦', 'Orders'],
     ['followups', '📞', 'Follow-ups'],
     ['feedback', '📝', 'Feedback'],
     ['reports', '📊', 'Reports'],
@@ -446,6 +456,26 @@ export default function App() {
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
               ))}
             </div>
+            <div className="notif-wrap">
+              <button className="pill" onClick={() => setNotifOpen(!notifOpen)}>
+                🔔 {notifs.filter((n) => !n.read).length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read).length}</b>}
+              </button>
+              {notifOpen && (
+                <div className="notif-panel">
+                  <div className="inv-head" style={{ marginBottom: 6 }}>
+                    <b>Notifications</b>
+                    <button className="btn-ghost sm" onClick={async () => { await api('/notifications/read', { method: 'POST' }); setNotifs((await api('/notifications')).rows); }}>Mark all read</button>
+                  </div>
+                  {notifs.map((n) => (
+                    <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1 }}>
+                      <span>{n.kind === 'payment_received' ? '💰' : n.kind === 'order_delivered' ? '🚚' : n.kind === 'order_approved' ? '✅' : n.kind === 'order_rejected' ? '✕' : '📦'}</span>
+                      <span style={{ fontSize: 13 }}>{n.message}</span>
+                    </div>
+                  ))}
+                  {notifs.length === 0 && <p className="muted" style={{ fontSize: 13 }}>Nothing yet — order updates will land here.</p>}
+                </div>
+              )}
+            </div>
             <div className="quick-actions" style={{ marginTop: 0, marginBottom: 14 }}>
               <button className="btn-ghost sm" onClick={() => generateDeptReport(dept)}>📊 {reportPeriod} report for this section</button>
             </div>
@@ -475,6 +505,12 @@ export default function App() {
                   <div className="kpi"><div className="label">Outstanding debts</div><div className="value">{fmt(dash.debtors)}</div><div className="sub">{dash.debtor_count} debtors</div></div>
                   <div className="kpi"><div className="label">Pipeline</div><div className="value">{fmt(dash.pipeline_value_ngn)}</div></div>
                   <div className="kpi"><div className="label">Follow-ups due today</div><div className="value">{dash.followups_due_today}</div></div>
+                </div>
+                <div className="kpis">
+                  <div className="kpi"><div className="label">My orders (this month)</div><div className="value">{orders.filter((o) => (o.created_at || '').slice(0, 7) === new Date().toISOString().slice(0, 7)).length}</div></div>
+                  <div className="kpi"><div className="label">Orders delivered</div><div className="value">{orders.filter((o) => ['delivered', 'paid'].includes(o.status)).length}</div></div>
+                  <div className="kpi"><div className="label">Payments received</div><div className="value">{fmt(orders.filter((o) => o.status === 'paid').reduce((s, o) => s + o.total_ngn, 0))}</div></div>
+                  <div className="kpi"><div className="label">Awaiting approval</div><div className="value">{orders.filter((o) => o.status === 'pending').length}</div></div>
                 </div>
                 {followups.length > 0 && (
                   <div className="card">
@@ -1267,6 +1303,69 @@ export default function App() {
           </div>
         )}
 
+        {view === 'orders' && (
+          <div className="card">
+            <div className="inv-head">
+              <h3>📦 Orders{opsMode ? '' : ' — yours'}</h3>
+              {!isGuest && <button className="btn-primary sm" onClick={() => setOrderForm({ contact_id: '', items: [{ name: '', qty: 1, price: 0 }], note: '' })}>+ Raise order</button>}
+            </div>
+            {orderForm && (
+              <div className="card" style={{ background: '#f7faf8' }}>
+                <h3 style={{ marginTop: 0 }}>New order</h3>
+                <div className="inv-item-row">
+                  <select value={orderForm.contact_id} onChange={(e) => setOrderForm({ ...orderForm, contact_id: e.target.value })}>
+                    <option value="">Select customer…</option>
+                    {(opsMode ? contacts : myContacts).map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
+                  </select>
+                </div>
+                {orderForm.items.map((it, i) => (
+                  <div key={i} className="inv-item-row">
+                    <input placeholder="Item name" value={it.name} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, name: e.target.value } : x) })} />
+                    <input type="number" min="1" placeholder="Qty" style={{ width: 84 }} value={it.qty} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} />
+                    <input type="number" min="0" placeholder="Unit price ₦" style={{ width: 130 }} value={it.price} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, price: Number(e.target.value) } : x) })} />
+                    <button className="act-btn" onClick={() => setOrderForm({ ...orderForm, items: orderForm.items.filter((_, j) => j !== i) })}>✕</button>
+                  </div>
+                ))}
+                <button className="btn-ghost sm" onClick={() => setOrderForm({ ...orderForm, items: [...orderForm.items, { name: '', qty: 1, price: 0 }] })}>+ line</button>
+                <div className="inv-item-row">
+                  <button className="btn-primary sm" onClick={async () => {
+                    try {
+                      await api('/orders', { method: 'POST', body: JSON.stringify({ contact_id: Number(orderForm.contact_id), items: orderForm.items.filter((x) => x.name && x.price > 0), note: orderForm.note }) });
+                      setOrderForm(null);
+                      setOrders((await api('/orders')).rows);
+                      setNotifs((await api('/notifications')).rows);
+                    } catch (e) { alert(e.message); }
+                  }}>Submit order</button>
+                  <button className="btn-ghost sm" onClick={() => setOrderForm(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
+            {orders.map((o) => (
+              <div key={o.id} className="inv-row">
+                <div className="thread-ava">{'📦'}</div>
+                <div style={{ flex: 1 }}>
+                  <div><b>Order #{o.id}</b> — {o.contact_name} {o.rep_name && <span className="muted">(rep: {o.rep_name})</span>}</div>
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    {o.total_ngn.toLocaleString()} naira · {JSON.parse(o.items_json || '[]').map((x) => `${x.name} ×${x.qty}`).join(', ') || '—'}
+                    {o.invoice_id && <> · <b>Invoice #{o.invoice_id}</b></>}
+                    {o.payment_ref && <> · ref {o.payment_ref}</>}
+                  </div>
+                </div>
+                <span className={`inv-tag ${o.status}`}>{o.status}</span>
+                {opsMode && (
+                  <div className="inv-actions-grid" style={{ marginTop: 0 }}>
+                    {o.status === 'pending' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/approve`, { method: 'POST' }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span>✅</span>Approve</button>}
+                    {o.status === 'pending' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/reject`, { method: 'POST' }); setOrders((await api('/orders')).rows); }}><span>✕</span>Reject</button>}
+                    {o.status === 'approved' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/deliver`, { method: 'POST' }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span>🚚</span>Delivered</button>}
+                    {o.status === 'delivered' && <button className="act-btn" onClick={async () => { const ref = prompt('Payment reference (optional)') || null; await api(`/orders/${o.id}/payment`, { method: 'POST', body: JSON.stringify({ ref }) }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span>💰</span>Post payment</button>}
+                  </div>
+                )}
+              </div>
+            ))}
+            {orders.length === 0 && <p className="muted">No orders yet — raise one above and watch it move through approval → invoice → delivery → payment.</p>}
+          </div>
+        )}
+
         {view === 'invoices' && (
           <div className="card">
             {invView === 'list' && (
@@ -1659,7 +1758,7 @@ export default function App() {
       </main>
 
       <nav className="bottomnav">
-        {nav.filter(([k]) => ['dashboard', 'customers', 'inbox', 'invoices'].includes(k) && allowed(k)).map(([k, icon, label]) => (
+        {nav.filter(([k]) => ['dashboard', 'customers', 'inbox', 'invoices', 'orders'].includes(k) && allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`bn-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span>{icon}</span>{label}
           </div>
