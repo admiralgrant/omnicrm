@@ -494,9 +494,29 @@ export default function App() {
                     <button className="btn-ghost sm" onClick={async () => { await api('/notifications/read', { method: 'POST' }); setNotifs((await api('/notifications')).rows); }}>Mark all read</button>
                   </div>
                   {notifs.map((n) => (
-                    <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1 }}>
-                      <span>{n.kind === 'payment_received' ? '💰' : n.kind === 'order_delivered' ? '🚚' : n.kind === 'order_approved' ? '✅' : n.kind === 'order_rejected' ? '✕' : '📦'}</span>
-                      <span style={{ fontSize: 13 }}>{n.message}</span>
+                    <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1, cursor: n.link ? 'pointer' : 'default' }}
+                      onClick={async () => {
+                        const link = n.link;
+                        if (!link) return;
+                        try {
+                          if (link.view === 'mail') {
+                            setView('mail');
+                            if (link.id) setActiveConv(await api(`/chat/conversations/${link.id}`));
+                          } else if (link.view === 'orders') {
+                            setView('orders');
+                          } else if (link.view === 'invoices') {
+                            setView('invoices');
+                          } else if (link.view === 'dashboard') {
+                            setView('dashboard');
+                            setDept(link.dept || 'sales');
+                          }
+                          setNotifOpen(false);
+                          await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
+                          setNotifs((await api('/notifications')).rows);
+                        } catch (e) { console.error(e); }
+                      }}>
+                      <span>{n.kind === 'payment_received' ? '💰' : n.kind === 'order_delivered' ? '🚚' : n.kind === 'order_approved' ? '✅' : n.kind === 'order_rejected' ? '✕' : n.kind === 'mention' ? '💬' : n.kind === 'stock_update' ? '📦' : n.kind === 'receipt' ? '🧾' : '📦'}</span>
+                      <span style={{ fontSize: 13 }}>{n.message} {n.link && <span className="notif-go">→</span>}</span>
                     </div>
                   ))}
                   {notifs.length === 0 && <p className="muted" style={{ fontSize: 13 }}>Nothing yet — order updates will land here.</p>}
