@@ -281,5 +281,37 @@ if (!invCols.includes('ngn_total')) {
 // migration: conversion processing fee (revenue stream)
 if (!invCols.includes('fee_rate')) db.exec('ALTER TABLE invoices ADD COLUMN fee_rate REAL NOT NULL DEFAULT 0');
 if (!invCols.includes('fee')) db.exec('ALTER TABLE invoices ADD COLUMN fee REAL NOT NULL DEFAULT 0');
+if (!invCols.includes('paid_at')) db.exec('ALTER TABLE invoices ADD COLUMN paid_at TEXT');
+
+// migration: sales order workflow (orders + stage notifications)
+db.exec(`
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  staff_id INTEGER,
+  contact_id INTEGER,
+  items_json TEXT NOT NULL DEFAULT '[]',
+  total_ngn REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  note TEXT,
+  invoice_id INTEGER,
+  payment_ref TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  approved_at TEXT,
+  delivered_at TEXT,
+  paid_at TEXT
+);
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  staff_id INTEGER,
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  read INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_orders_staff ON orders(staff_id);
+CREATE INDEX IF NOT EXISTS idx_notif_staff ON notifications(staff_id);
+`);
 
 export default db;
