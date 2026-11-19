@@ -4,8 +4,13 @@ import cors from '@fastify/cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createHmac, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import db from './db.js';
+
+const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'receipts');
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
@@ -1305,16 +1310,41 @@ app.post('/stock', { preHandler: requireAuth }, async (req, reply) => {
   return { ok: true, id: info.lastInsertRowid };
 });
 
-// payment receipts: rep uploads proof when a customer pays from another account
+// payment receipts: rep uploads proof (with optional photo) when a customer pays from another account
 app.post('/receipts', { preHandler: requireAuth }, async (req, reply) => {
   if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
-  const { contact_id, payer_name, amount_ngn, note, receipt_name, receipt_body } = req.body || {};
+  const { contact_id, payer_name, amount_ngn, note, receipt_name, receipt_body, image_data_url } = req.body || {};
   if (!contact_id || !payer_name) return reply.code(400).send({ error: 'contact_id and payer_name are required' });
   const info = db.prepare('INSERT INTO payment_receipts (user_id, contact_id, staff_id, payer_name, amount_ngn, note, receipt_name, receipt_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, req.user.staff_id || null, payer_name, amount_ngn || null, note || null, receipt_name || null, receipt_body || null);
+    .run(req.user.id, contact_id, req.user.staff_id || null, payer_name, amount_ngn || null, note || null, receipt_name || null, null);
+  // persist the receipt photo (data URL) to disk
+  let file = null;
+  if (image_data_url && typeof image_data_url === 'string' && image_data_url.startsWith('data:image/')) {
+    const m = image_data_url.match(/^data:(image\/\w+);base64,(.+)$/s);
+    if (!m) return reply.code(400).send({ error: 'Invalid image format' });
+    const [, mime, b64] = m;
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length > 8 * 1024 * 1024) return reply.code(413).send({ error: 'Image too large (max 8MB)' });
+    const ext = mime.split('/')[1].replace('jpeg', 'jpg');
+    file = `receipt-${info.lastInsertRowid}.${ext}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, file), buf);
+    db.prepare('UPDATE payment_receipts SET receipt_body = ? WHERE id = ?').run(file, info.lastInsertRowid);
+  }
   const c = db.prepare('SELECT company FROM contacts WHERE id = ?').get(contact_id);
-  notify(req.user.id, null, 'receipt', `New payment receipt from ${payer_name} (${c?.company || 'customer'}) awaits matching by accounts.`);
-  return { ok: true, id: info.lastInsertRowid };
+  notify(req.user.id, null, 'receipt', `New payment receipt from ${payer_name} (${c?.company || 'customer'})${file ? ' with photo' : ''} awaits matching by accounts.`);
+  return { ok: true, id: info.lastInsertRowid, has_image: !!file };
+});
+
+app.get('/receipts/:id/image', { preHandler: requireAuth }, async (req, reply) => {
+  const r = db.prepare('SELECT * FROM payment_receipts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!r) return reply.code(404).send({ error: 'Receipt not found' });
+  if (!isOps(req.user) && r.staff_id !== req.user.staff_id) return reply.code(403).send({ error: 'Not your receipt' });
+  if (!r.receipt_body) return reply.code(404).send({ error: 'No image attached' });
+  const p = path.join(UPLOAD_DIR, r.receipt_body);
+  if (!fs.existsSync(p)) return reply.code(404).send({ error: 'Image missing' });
+  const ext = path.extname(p).slice(1);
+  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  return reply.header('Content-Type', mime).header('Cache-Control', 'private, max-age=300').send(fs.readFileSync(p));
 });
 
 app.get('/receipts', { preHandler: requireAuth }, async (req) => {
