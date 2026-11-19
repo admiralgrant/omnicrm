@@ -1328,7 +1328,11 @@ app.post('/chat/conversations/:id/messages', { preHandler: requireAuth }, async 
   // notify mentioned
   for (const sid of resolved) {
     if (sid === req.user.staff_id) continue;
-    notify(req.user.id, sid, 'mention', `${req.user.name || 'Someone'} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`, { view: 'mail', id: c.id });
+    const mentioned = db.prepare('SELECT name FROM staff WHERE id = ?').get(sid);
+    const first = mentioned ? mentioned.name.split(' ')[0] : '';
+    // strip the raw "@Firstname" token the mention picker leaves in the body, so the preview reads naturally
+    const cleanBody = first ? body.replace(new RegExp('@' + first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '').replace(/\s{2,}/g, ' ').trim() : body;
+    notify(req.user.id, sid, 'mention', `${req.user.name || 'Someone'} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${cleanBody.slice(0, 120)}`, { view: 'mail', id: c.id });
   }
   return { ok: true, id: info.lastInsertRowid };
 });
@@ -1385,7 +1389,10 @@ app.post('/mail/threads/:id/messages', { preHandler: requireAuth }, async (req, 
   for (const sid of resolved) {
     if (sid === req.user.staff_id) continue;
     const userName = req.user.name || 'Someone';
-    notify(req.user.id, sid, 'mention', `${userName} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`, { view: 'mail', id: t.id });
+    const mentioned = db.prepare('SELECT name FROM staff WHERE id = ?').get(sid);
+    const first = mentioned ? mentioned.name.split(' ')[0] : '';
+    const cleanBody = first ? body.replace(new RegExp('@' + first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '').replace(/\s{2,}/g, ' ').trim() : body;
+    notify(req.user.id, sid, 'mention', `${userName} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${cleanBody.slice(0, 120)}`, { view: 'mail', id: t.id });
   }
   return { ok: true, id: info.lastInsertRowid };
 });
