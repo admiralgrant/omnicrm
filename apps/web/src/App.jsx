@@ -1595,16 +1595,40 @@ export default function App() {
                   </div>
                 </div>
               )}
-              {chatConvs.map((c) => (
+              <div className="chat-section-head">Channels</div>
+              {chatConvs.filter((c) => c.kind === 'group').map((c) => (
                 <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => setActiveConv(await api(`/chat/conversations/${c.id}`))}>
-                  <div className="thread-ava">{c.kind === 'dm' ? '👤' : '#'}</div>
+                  <div className="thread-ava">#</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <b>{c.title || (c.kind === 'dm' ? 'Direct message' : 'Channel')}</b>
+                    <b>{c.title || 'Channel'}{c.dept && <span className="muted" style={{ fontSize: 11 }}> · {c.members.length} members</span>}</b>
                     {c.last && <div className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.last.sender_name ? c.last.sender_name.split(' ')[0] + ': ' : ''}{c.last.body}</div>}
                   </div>
                 </div>
               ))}
-              {chatConvs.length === 0 && <p className="muted" style={{ padding: 12 }}>No conversations yet.</p>}
+              <div className="chat-section-head">Direct messages</div>
+              {chatConvs.filter((c) => c.kind === 'dm').map((c) => (
+                <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => setActiveConv(await api(`/chat/conversations/${c.id}`))}>
+                  <div className="thread-ava">{c.title ? c.title.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() : '👤'}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b>{c.title || 'Direct message'}</b>
+                    {c.last && <div className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.last.sender_name ? c.last.sender_name.split(' ')[0] + ': ' : ''}{c.last.body}</div>}
+                  </div>
+                </div>
+              ))}
+              <div className="chat-section-head">Contacts</div>
+              {chatStaff.filter((s) => s.id !== jwtPayload()?.staff_id).map((s) => (
+                <div key={s.id} className="chat-item" onClick={async () => {
+                  const r = await api('/chat/conversations', { method: 'POST', body: JSON.stringify({ kind: 'dm', with_staff_id: s.id }) });
+                  setChatConvs((await api('/chat/conversations')).conversations);
+                  setActiveConv(await api(`/chat/conversations/${r.id}`));
+                }}>
+                  <div className="thread-ava">{s.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b>{s.name}</b>
+                    <div className="muted" style={{ fontSize: 12 }}>{s.role || 'Staff'}{s.department ? ' · ' + s.department : ''}</div>
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="chat-window">
               {activeConv ? (
@@ -1615,7 +1639,8 @@ export default function App() {
                   </div>
                   <div className="chat-messages">
                     {activeConv.messages.map((m) => {
-                      const mine = m.sender_staff_id === jwtPayload()?.staff_id;
+                      const myStaff = jwtPayload()?.staff_id;
+                      const mine = myStaff ? m.sender_staff_id === myStaff : m.sender_staff_id === null;
                       return (
                         <div key={m.id} className={`bubble-row ${mine ? 'mine' : ''}`}>
                           <div className="bubble">
