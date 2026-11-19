@@ -1435,16 +1435,32 @@ export default function App() {
               <div className="card" style={{ background: '#f7faf8' }}>
                 <h3 style={{ marginTop: 0 }}>New order</h3>
                 <div className="inv-item-row">
-                  <select value={orderForm.contact_id} onChange={(e) => setOrderForm({ ...orderForm, contact_id: e.target.value })}>
-                    <option value="">Select customer…</option>
-                    {(opsMode ? contacts : myContacts).map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
-                  </select>
+                  <div className="inv-field">
+                    <label className="inv-label">Customer</label>
+                    <select value={orderForm.contact_id} onChange={(e) => setOrderForm({ ...orderForm, contact_id: e.target.value })}>
+                      <option value="">Select customer…</option>
+                      {(opsMode ? contacts : myContacts).map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <label className="inv-label" style={{ marginTop: 10 }}>Order items</label>
+                <div className="inv-item-row" style={{ marginBottom: 0 }}>
+                  <div className="inv-field"><span className="muted" style={{ fontSize: 11 }}>Item</span></div>
+                  <div className="inv-field" style={{ flex: '0 0 76px' }}><span className="muted" style={{ fontSize: 11 }}>Qty</span></div>
+                  <div className="inv-field" style={{ flex: '0 0 118px' }}><span className="muted" style={{ fontSize: 11 }}>Unit price (₦)</span></div>
+                  <span style={{ width: 34 }} />
                 </div>
                 {orderForm.items.map((it, i) => (
                   <div key={i} className="inv-item-row">
-                    <input placeholder="Item name" value={it.name} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, name: e.target.value } : x) })} />
-                    <input type="number" min="1" placeholder="Qty" style={{ width: 84 }} value={it.qty} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} />
-                    <input type="number" min="0" placeholder="Unit price ₦" style={{ width: 130 }} value={it.price} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, price: Number(e.target.value) } : x) })} />
+                    <div className="inv-field">
+                      <input placeholder="e.g. Emulsion 20L" value={it.name} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, name: e.target.value } : x) })} />
+                    </div>
+                    <div className="inv-field" style={{ flex: '0 0 76px' }}>
+                      <input type="number" min="1" placeholder="Qty" value={it.qty} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} />
+                    </div>
+                    <div className="inv-field" style={{ flex: '0 0 118px' }}>
+                      <input type="number" min="0" placeholder="Unit price ₦" value={it.price} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, price: Number(e.target.value) } : x) })} />
+                    </div>
                     <button className="act-btn" onClick={() => setOrderForm({ ...orderForm, items: orderForm.items.filter((_, j) => j !== i) })}>✕</button>
                   </div>
                 ))}
