@@ -93,6 +93,10 @@ export default function App() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [orderForm, setOrderForm] = useState(null);
   const [myContacts, setMyContacts] = useState([]);
+  const [mailThreads, setMailThreads] = useState([]);
+  const [mailThread, setMailThread] = useState(null);
+  const [stockPosts, setStockPosts] = useState([]);
+  const [receipts, setReceipts] = useState([]);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -123,6 +127,9 @@ export default function App() {
         try { setOrders((await api('/orders')).rows); } catch { /* n/a */ }
         try { setNotifs((await api('/notifications')).rows); } catch { /* n/a */ }
         try { setMyContacts((await api('/me/contacts')).rows); } catch { /* n/a */ }
+        try { setMailThreads((await api('/mail/threads')).threads); } catch { /* n/a */ }
+        try { setStockPosts((await api('/stock')).posts); } catch { /* n/a */ }
+        try { setReceipts((await api('/receipts')).rows); } catch { /* n/a */ }
         if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
@@ -160,11 +167,11 @@ export default function App() {
   const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString();
 
   const FRONT_ACCESS = {
-    sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline'],
-    support: ['dashboard', 'support', 'inbox', 'feedback', 'reports'],
-    inventory: ['dashboard', 'inventory', 'product', 'reports'],
-    hr: ['dashboard', 'hr', 'reports'],
-    account: ['dashboard', 'invoices', 'orders', 'reports'],
+    sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'orders', 'mail', 'followups', 'feedback', 'reports', 'pipeline'],
+    support: ['dashboard', 'support', 'inbox', 'mail', 'feedback', 'reports'],
+    inventory: ['dashboard', 'inventory', 'product', 'mail', 'reports'],
+    hr: ['dashboard', 'hr', 'mail', 'reports'],
+    account: ['dashboard', 'invoices', 'orders', 'mail', 'reports'],
   };
   const allowed = (section) => {
     if (section === 'portal') return !!(me?.staff_id || me?.staff);
@@ -415,6 +422,7 @@ export default function App() {
     ['inbox', '💬', 'Inbox'],
     ['invoices', '🧾', 'Invoicing'],
     ['orders', '📦', 'Orders'],
+    ['mail', '✉️', 'In-Mail'],
     ['followups', '📞', 'Follow-ups'],
     ['feedback', '📝', 'Feedback'],
     ['reports', '📊', 'Reports'],
@@ -1363,6 +1371,111 @@ export default function App() {
               </div>
             ))}
             {orders.length === 0 && <p className="muted">No orders yet — raise one above and watch it move through approval → invoice → delivery → payment.</p>}
+          </div>
+        )}
+
+        {view === 'mail' && (
+          <div className="card">
+            <div className="inv-head">
+              <h3>✉️ In-Mail — team communication</h3>
+              {!mailThread && <button className="btn-primary sm" onClick={async () => {
+                const subject = prompt('Thread subject (e.g. "Order for Eko — stock check")');
+                if (!subject) return;
+                await api('/mail/threads', { method: 'POST', body: JSON.stringify({ subject, kind: 'note' }) });
+                setMailThreads((await api('/mail/threads')).threads);
+              }}>+ New thread</button>}
+              {mailThread && <button className="btn-ghost sm" onClick={() => setMailThread(null)}>← Back</button>}
+            </div>
+            {!mailThread ? (
+              <>
+                <div className="mail-sections">
+                  <div className="mail-col">
+                    <h4 style={{ marginTop: 0 }}>📮 Threads</h4>
+                    {mailThreads.map((t) => (
+                      <div key={t.id} className="inv-row" style={{ cursor: 'pointer' }} onClick={async () => setMailThread(await api(`/mail/threads/${t.id}`))}>
+                        <div className="thread-ava">{t.kind === 'order' ? '📦' : t.kind === 'payment' ? '💰' : '✉️'}</div>
+                        <div style={{ flex: 1 }}>
+                          <b>{t.subject || '(no subject)'}</b>
+                          <div className="muted" style={{ fontSize: 12 }}>{t.created_at}</div>
+                        </div>
+                      </div>
+                    ))}
+                    {mailThreads.length === 0 && <p className="muted">No threads yet — start one to talk to your team here instead of WhatsApp.</p>}
+                  </div>
+                  <div className="mail-col">
+                    <h4 style={{ marginTop: 0 }}>📊 Latest stock (from inventory)</h4>
+                    {stockPosts.map((p) => (
+                      <div key={p.id} className="inv-row">
+                        <div className="thread-ava">📦</div>
+                        <div style={{ flex: 1 }}>
+                          <b>{p.product_name}</b> — <b>{p.qty_on_hand}</b> on hand
+                          {p.poster && <span className="muted"> · {p.poster}</span>}
+                          {p.note && <div className="muted" style={{ fontSize: 12 }}>{p.note}</div>}
+                        </div>
+                      </div>
+                    ))}
+                    {stockPosts.length === 0 && <p className="muted">No stock posts yet.</p>}
+                    {opsMode && <button className="btn-ghost sm" onClick={async () => {
+                      const name = prompt('Product name');
+                      if (!name) return;
+                      const qty = Number(prompt('Quantity on hand'));
+                      const note = prompt('Note (optional)') || '';
+                      await api('/stock', { method: 'POST', body: JSON.stringify({ product_name: name, qty_on_hand: qty, note }) });
+                      setStockPosts((await api('/stock')).posts);
+                    }}>+ Post stock update</button>}
+                  </div>
+                  <div className="mail-col">
+                    <h4 style={{ marginTop: 0 }}>🧾 Payment receipts</h4>
+                    {receipts.map((r) => (
+                      <div key={r.id} className="inv-row">
+                        <div className="thread-ava">💰</div>
+                        <div style={{ flex: 1 }}>
+                          <b>{r.payer_name}</b> {r.amount_ngn && <span className="muted">· {fmt(r.amount_ngn)}</span>}
+                          <div className="muted" style={{ fontSize: 12 }}>{r.contact_name}{r.rep_name && <> · rep: {r.rep_name}</>}</div>
+                        </div>
+                        <span className={`inv-tag ${r.status === 'matched' ? 'paid' : 'pending'}`}>{r.status}</span>
+                        {opsMode && r.status === 'pending' && <button className="act-btn" onClick={async () => {
+                          const inv = prompt('Match to invoice # (optional — enter number)');
+                          await api(`/receipts/${r.id}/match`, { method: 'POST', body: JSON.stringify({ invoice_id: inv ? Number(inv) : null }) });
+                          setReceipts((await api('/receipts')).rows);
+                        }}><span>✅</span>Match</button>}
+                      </div>
+                    ))}
+                    {receipts.length === 0 && <p className="muted">No receipts yet.</p>}
+                    {!isGuest && <button className="btn-ghost sm" onClick={async () => {
+                      const contactId = Number(prompt('Customer ID (see Customers tab)'));
+                      if (!contactId) return;
+                      const payer = prompt('Who paid? (e.g. "Alhaja Tuku — Alhaja Enterprises")');
+                      if (!payer) return;
+                      const amt = Number(prompt('Amount (₦)') || 0);
+                      await api('/receipts', { method: 'POST', body: JSON.stringify({ contact_id: contactId, payer_name: payer, amount_ngn: amt }) });
+                      setReceipts((await api('/receipts')).rows);
+                    }}>+ Upload receipt</button>}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="mail-thread">
+                <h4>{mailThread.thread.subject || '(no subject)'}</h4>
+                {mailThread.messages.map((m) => (
+                  <div key={m.id} className="mail-msg" style={{ alignSelf: m.sender_staff_id === jwtPayload()?.staff_id ? 'flex-end' : 'flex-start' }}>
+                    <div className="muted" style={{ fontSize: 11 }}>{m.sender_name || 'You'} {m.mentions?.length > 0 && <span>· mentioned {m.mentions.length}</span>}</div>
+                    <div>{m.body}</div>
+                  </div>
+                ))}
+                {mailThread.messages.length === 0 && <p className="muted">No messages yet.</p>}
+                <div className="composer" style={{ marginTop: 12 }}>
+                  <input placeholder="Type a message… @mention by staff ID" onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && e.target.value.trim()) {
+                      await api(`/mail/threads/${mailThread.thread.id}/messages`, { method: 'POST', body: JSON.stringify({ body: e.target.value.trim(), mentions: [] }) });
+                      e.target.value = '';
+                      setMailThread(await api(`/mail/threads/${mailThread.thread.id}`));
+                    }
+                  }} />
+                  <span className="muted" style={{ fontSize: 11, marginTop: 6 }}>This keeps team talk inside OmniCRM — no WhatsApp/Slack needed.</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
