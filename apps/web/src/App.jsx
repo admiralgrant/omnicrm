@@ -104,6 +104,14 @@ export default function App() {
   const [mentionedIds, setMentionedIds] = useState([]);
   const [mentionedGroups, setMentionedGroups] = useState([]);
   const [receiptForm, setReceiptForm] = useState(null);
+  const [chatConvs, setChatConvs] = useState([]);
+  const [chatStaff, setChatStaff] = useState([]);
+  const [activeConv, setActiveConv] = useState(null);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatMentionOpen, setChatMentionOpen] = useState(false);
+  const [chatMentioned, setChatMentioned] = useState([]);
+  const [chatGroups, setChatGroups] = useState([]);
+  const [dmPickerOpen, setDmPickerOpen] = useState(false);
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
@@ -138,6 +146,9 @@ export default function App() {
         try { setStockPosts((await api('/stock')).posts); } catch { /* n/a */ }
         try { setReceipts((await api('/receipts')).rows); } catch { /* n/a */ }
         try { setMentionStaff((await api('/staff/mentions')).staff); } catch { /* n/a */ }
+        const chat = await api('/chat/ensure-general');
+        setChatConvs(chat.conversations);
+        setChatStaff((await api('/chat/conversations')).staff);
         if (meJwt()) { try { setPortal(await api('/me/portal')); setPortalShifts((await api('/me/shifts')).shifts); } catch { /* n/a */ } }
       } catch (e) {
         console.error(e);
@@ -1446,163 +1457,107 @@ export default function App() {
         )}
 
         {view === 'mail' && (
-          <div className="card">
-            <div className="inv-head">
-              <h3>✉️ In-Mail — team communication</h3>
-              {!mailThread && <button className="btn-primary sm" onClick={async () => {
-                const subject = prompt('Thread subject (e.g. "Order for Eko — stock check")');
-                if (!subject) return;
-                await api('/mail/threads', { method: 'POST', body: JSON.stringify({ subject, kind: 'note' }) });
-                setMailThreads((await api('/mail/threads')).threads);
-              }}>+ New thread</button>}
-              {mailThread && <button className="btn-ghost sm" onClick={() => setMailThread(null)}>← Back</button>}
-            </div>
-            {!mailThread ? (
-              <>
-                <div className="mail-sections">
-                  <div className="mail-col">
-                    <h4 style={{ marginTop: 0 }}>📮 Threads</h4>
-                    {mailThreads.map((t) => (
-                      <div key={t.id} className="inv-row" style={{ cursor: 'pointer' }} onClick={async () => setMailThread(await api(`/mail/threads/${t.id}`))}>
-                        <div className="thread-ava">{t.kind === 'order' ? '📦' : t.kind === 'payment' ? '💰' : '✉️'}</div>
-                        <div style={{ flex: 1 }}>
-                          <b>{t.subject || '(no subject)'}</b>
-                          <div className="muted" style={{ fontSize: 12 }}>{t.created_at}</div>
-                        </div>
-                      </div>
-                    ))}
-                    {mailThreads.length === 0 && <p className="muted">No threads yet — start one to talk to your team here instead of WhatsApp.</p>}
-                  </div>
-                  <div className="mail-col">
-                    <h4 style={{ marginTop: 0 }}>📊 Latest stock (from inventory)</h4>
-                    {stockPosts.map((p) => (
-                      <div key={p.id} className="inv-row">
-                        <div className="thread-ava">📦</div>
-                        <div style={{ flex: 1 }}>
-                          <b>{p.product_name}</b> — <b>{p.qty_on_hand}</b> on hand
-                          {p.poster && <span className="muted"> · {p.poster}</span>}
-                          {p.note && <div className="muted" style={{ fontSize: 12 }}>{p.note}</div>}
-                        </div>
-                      </div>
-                    ))}
-                    {stockPosts.length === 0 && <p className="muted">No stock posts yet.</p>}
-                    {opsMode && <button className="btn-ghost sm" onClick={async () => {
-                      const name = prompt('Product name');
-                      if (!name) return;
-                      const qty = Number(prompt('Quantity on hand'));
-                      const note = prompt('Note (optional)') || '';
-                      await api('/stock', { method: 'POST', body: JSON.stringify({ product_name: name, qty_on_hand: qty, note }) });
-                      setStockPosts((await api('/stock')).posts);
-                    }}>+ Post stock update</button>}
-                  </div>
-                  <div className="mail-col">
-                    <h4 style={{ marginTop: 0 }}>🧾 Payment receipts</h4>
-                    {receipts.map((r) => (
-                      <div key={r.id} className="inv-row">
-                        <div className="thread-ava">💰</div>
-                        <div style={{ flex: 1 }}>
-                          <b>{r.payer_name}</b> {r.amount_ngn && <span className="muted">· {fmt(r.amount_ngn)}</span>}
-                          <div className="muted" style={{ fontSize: 12 }}>{r.contact_name}{r.rep_name && <> · rep: {r.rep_name}</>}</div>
-                          {r.receipt_body && <div style={{ marginTop: 4 }}><ReceiptThumb id={r.id} small /></div>}
-                        </div>
-                        <span className={`inv-tag ${r.status === 'matched' ? 'paid' : 'pending'}`}>{r.status}</span>
-                        {opsMode && r.status === 'pending' && <button className="act-btn" onClick={async () => {
-                          const inv = prompt('Match to invoice # (optional — enter number)');
-                          await api(`/receipts/${r.id}/match`, { method: 'POST', body: JSON.stringify({ invoice_id: inv ? Number(inv) : null }) });
-                          setReceipts((await api('/receipts')).rows);
-                        }}><span>✅</span>Match</button>}
-                      </div>
-                    ))}
-                    {receipts.length === 0 && <p className="muted">No receipts yet.</p>}
-                    {!isGuest && <button className="btn-ghost sm" onClick={() => setReceiptForm({ contact_id: '', payer_name: '', amount_ngn: 0, image_data_url: null })}>+ Upload receipt</button>}
-                    {receiptForm && (
-                      <div style={{ background: '#fff', border: '1px solid var(--line)', borderRadius: 10, padding: 12, marginTop: 8 }}>
-                        <div className="inv-item-row">
-                          <select value={receiptForm.contact_id} onChange={(e) => setReceiptForm({ ...receiptForm, contact_id: e.target.value })}>
-                            <option value="">Customer…</option>
-                            {(opsMode ? contacts : myContacts).map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="inv-item-row">
-                          <input placeholder="Who paid? (e.g. Alhaja Tuku — Alhaja Enterprises)" value={receiptForm.payer_name} onChange={(e) => setReceiptForm({ ...receiptForm, payer_name: e.target.value })} />
-                          <input type="number" placeholder="Amount ₦" style={{ width: 120 }} value={receiptForm.amount_ngn} onChange={(e) => setReceiptForm({ ...receiptForm, amount_ngn: Number(e.target.value) })} />
-                        </div>
-                        <div className="inv-item-row">
-                          <input type="file" accept="image/*" onChange={(e) => {
-                            const f = e.target.files[0];
-                            if (!f) return;
-                            if (f.size > 8 * 1024 * 1024) { alert('Image too large (max 8MB)'); return; }
-                            const rd = new FileReader();
-                            rd.onload = () => setReceiptForm((rf) => ({ ...rf, image_data_url: rd.result }));
-                            rd.readAsDataURL(f);
-                          }} />
-                          {receiptForm.image_data_url && <img src={receiptForm.image_data_url} alt="receipt" style={{ height: 64, borderRadius: 8, border: '1px solid var(--line)' }} />}
-                        </div>
-                        <div className="inv-item-row">
-                          <button className="btn-primary sm" onClick={async () => {
-                            try {
-                              await api('/receipts', { method: 'POST', body: JSON.stringify(receiptForm) });
-                              setReceiptForm(null);
-                              setReceipts((await api('/receipts')).rows);
-                              setNotifs((await api('/notifications')).rows);
-                            } catch (e) { alert(e.message); }
-                          }}>Submit receipt</button>
-                          <button className="btn-ghost sm" onClick={() => setReceiptForm(null)}>Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="mail-thread">
-                <h4>{mailThread.thread.subject || '(no subject)'}</h4>
-                {mailThread.messages.map((m) => (
-                  <div key={m.id} className="mail-msg" style={{ alignSelf: m.sender_staff_id === jwtPayload()?.staff_id ? 'flex-end' : 'flex-start' }}>
-                    <div className="muted" style={{ fontSize: 11 }}>{m.sender_name || 'You'} {m.mentions?.length > 0 && <span>· mentioned {m.mentions.length}</span>}</div>
-                    <div>{m.body}</div>
-                  </div>
-                ))}
-                {mailThread.messages.length === 0 && <p className="muted">No messages yet.</p>}
-                <div className="composer" style={{ marginTop: 12 }}>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      placeholder="Type a message… type @ to mention a person or a team"
-                      value={mailDraft}
-                      onChange={(e) => { setMailDraft(e.target.value); setMentionOpen(e.target.value.endsWith('@')); }}
-                      onKeyDown={async (e) => {
-                        if (e.key === 'Enter' && mailDraft.trim() && !mentionOpen) {
-                          const body = mailDraft.replace(/@$/, '').trim();
-                          await api(`/mail/threads/${mailThread.thread.id}/messages`, { method: 'POST', body: JSON.stringify({ body, mentions: mentionedIds, groups: mentionedGroups }) });
-                          setMailDraft(''); setMentionedIds([]); setMentionedGroups([]);
-                          setMailThread(await api(`/mail/threads/${mailThread.thread.id}`));
-                        }
-                      }}
-                    />
-                    {mentionOpen && (
-                      <div className="mention-pop">
-                        <div className="mention-head">Tap to mention</div>
-                        {mentionGroups.map((g) => (
-                          <div key={g} className="mention-item" onClick={() => { setMentionedGroups([...new Set([...mentionedGroups, g])]); setMentionOpen(false); setMailDraft((d) => d.replace(/@$/, '') + '@' + g + ' '); }}>
-                            👥 @{g} (whole team)
-                          </div>
-                        ))}
-                        {mentionStaff.map((s) => (
-                          <div key={s.id} className="mention-item" onClick={() => { setMentionedIds([...new Set([...mentionedIds, s.id])]); setMentionOpen(false); setMailDraft((d) => d.replace(/@$/, '') + '@' + s.name.split(' ')[0] + ' '); }}>
-                            {s.name} <span className="muted">· {s.department}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {(mentionedIds.length > 0 || mentionedGroups.length > 0) && (
-                    <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                      Tagging: {mentionGroups.map((g) => '#' + g).join(' ')} {mentionedIds.map((id) => { const s = mentionStaff.find((x) => x.id === id); return s ? '@' + s.name.split(' ')[0] : ''; }).join(' ')}
-                    </div>
-                  )}
-                </div>
+          <div className="chat-shell">
+            <div className="chat-sidebar">
+              <div className="inv-head" style={{ padding: '10px 12px' }}>
+                <h3 style={{ margin: 0 }}>💬 Team Chat</h3>
+                <button className="btn-primary sm" onClick={() => setDmPickerOpen(!dmPickerOpen)}>+ New</button>
               </div>
-            )}
+              {dmPickerOpen && (
+                <div className="dm-picker">
+                  <div className="mention-head">Message someone</div>
+                  {chatStaff.filter((s) => s.id !== jwtPayload()?.staff_id).map((s) => (
+                    <div key={s.id} className="mention-item" onClick={async () => {
+                      const r = await api('/chat/conversations', { method: 'POST', body: JSON.stringify({ kind: 'dm', with_staff_id: s.id }) });
+                      setChatConvs((await api('/chat/conversations')).conversations);
+                      setActiveConv(await api(`/chat/conversations/${r.id}`));
+                      setDmPickerOpen(false);
+                    }}>
+                      {s.name} <span className="muted">· {s.department}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {chatConvs.map((c) => (
+                <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => setActiveConv(await api(`/chat/conversations/${c.id}`))}>
+                  <div className="thread-ava">{c.kind === 'dm' ? '👤' : '#'}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b>{c.title || (c.kind === 'dm' ? 'Direct message' : 'Channel')}</b>
+                    {c.last && <div className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.last.sender_name ? c.last.sender_name.split(' ')[0] + ': ' : ''}{c.last.body}</div>}
+                  </div>
+                </div>
+              ))}
+              {chatConvs.length === 0 && <p className="muted" style={{ padding: 12 }}>No conversations yet.</p>}
+            </div>
+            <div className="chat-window">
+              {activeConv ? (
+                <>
+                  <div className="chat-header">
+                    <b>{activeConv.conversation.kind === 'dm' ? '👤 ' + activeConv.conversation.title : '# ' + (activeConv.conversation.title || 'Channel')}</b>
+                    {activeConv.conversation.kind === 'group' && <span className="muted">{activeConv.conversation.members.length} members</span>}
+                  </div>
+                  <div className="chat-messages">
+                    {activeConv.messages.map((m) => {
+                      const mine = m.sender_staff_id === jwtPayload()?.staff_id;
+                      return (
+                        <div key={m.id} className={`bubble-row ${mine ? 'mine' : ''}`}>
+                          <div className="bubble">
+                            {!mine && <div className="bubble-sender">{m.sender_name || 'System'}</div>}
+                            <div>{m.body}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {activeConv.messages.length === 0 && <p className="muted" style={{ padding: 16 }}>No messages yet — say hello 👋</p>}
+                  </div>
+                  <div className="chat-composer">
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        placeholder="Type a message… @ to mention"
+                        value={chatDraft}
+                        onChange={(e) => { setChatDraft(e.target.value); setChatMentionOpen(e.target.value.endsWith('@')); }}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && chatDraft.trim() && !chatMentionOpen) {
+                            const body = chatDraft.replace(/@$/, '').trim();
+                            await api(`/chat/conversations/${activeConv.conversation.id}/messages`, { method: 'POST', body: JSON.stringify({ body, mentions: chatMentioned, groups: chatGroups }) });
+                            setChatDraft(''); setChatMentioned([]); setChatGroups([]);
+                            setActiveConv(await api(`/chat/conversations/${activeConv.conversation.id}`));
+                            setChatConvs((await api('/chat/conversations')).conversations);
+                          }
+                        }}
+                      />
+                      {chatMentionOpen && (
+                        <div className="mention-pop" style={{ bottom: 44 }}>
+                          <div className="mention-head">Tap to mention</div>
+                          {['sales', 'support', 'inventory', 'hr', 'account'].map((g) => (
+                            <div key={g} className="mention-item" onClick={() => { setChatGroups([...new Set([...chatGroups, g])]); setChatMentionOpen(false); setChatDraft((d) => d.replace(/@$/, '') + '@' + g + ' '); }}>
+                              👥 @{g} (whole team)
+                            </div>
+                          ))}
+                          {chatStaff.map((s) => (
+                            <div key={s.id} className="mention-item" onClick={() => { setChatMentioned([...new Set([...chatMentioned, s.id])]); setChatMentionOpen(false); setChatDraft((d) => d.replace(/@$/, '') + '@' + s.name.split(' ')[0] + ' '); }}>
+                              {s.name} <span className="muted">· {s.department}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button className="btn-primary sm" onClick={async () => {
+                      if (!chatDraft.trim()) return;
+                      await api(`/chat/conversations/${activeConv.conversation.id}/messages`, { method: 'POST', body: JSON.stringify({ body: chatDraft.trim(), mentions: chatMentioned, groups: chatGroups }) });
+                      setChatDraft(''); setChatMentioned([]); setChatGroups([]);
+                      setActiveConv(await api(`/chat/conversations/${activeConv.conversation.id}`));
+                      setChatConvs((await api('/chat/conversations')).conversations);
+                    }}>Send</button>
+                  </div>
+                </>
+              ) : (
+                <div className="chat-empty">
+                  <div style={{ fontSize: 40 }}>💬</div>
+                  <p className="muted">Select a conversation, or hit + New to DM a teammate.</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
