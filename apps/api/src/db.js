@@ -314,4 +314,53 @@ CREATE INDEX IF NOT EXISTS idx_orders_staff ON orders(staff_id);
 CREATE INDEX IF NOT EXISTS idx_notif_staff ON notifications(staff_id);
 `);
 
+// migration: internal mail (teams) — threads + messages + receipts + stock posts
+db.exec(`
+CREATE TABLE IF NOT EXISTS mail_threads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  subject TEXT,
+  kind TEXT NOT NULL DEFAULT 'note',      -- note | order | payment | receipt | stock
+  ref_id INTEGER,                          -- orders.id / invoices.id etc the thread is about
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS mail_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id INTEGER NOT NULL,
+  sender_staff_id INTEGER,
+  body TEXT NOT NULL,
+  mentions_json TEXT NOT NULL DEFAULT '[]', -- staff ids tagged
+  attachment_path TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS payment_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  contact_id INTEGER,
+  staff_id INTEGER,
+  payer_name TEXT,
+  amount_ngn REAL,
+  note TEXT,
+  receipt_body TEXT,         -- base64 when small; else file path
+  receipt_name TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending | matched
+  matched_invoice_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS stock_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  product_id INTEGER,
+  product_name TEXT,
+  qty_on_hand REAL NOT NULL DEFAULT 0,
+  posted_by INTEGER,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mail_threads_user ON mail_threads(user_id);
+CREATE INDEX IF NOT EXISTS idx_mail_msgs_thread ON mail_messages(thread_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_staff ON payment_receipts(staff_id);
+`);
+
 export default db;
