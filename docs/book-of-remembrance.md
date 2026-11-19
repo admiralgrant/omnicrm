@@ -40,7 +40,7 @@ Say **"book of remembrance"** and I pull this up.
 - **Ads Studio full build** — guided setup, copy/creative gen, Meta+Google API launch, ROAS analytics, %-of-spend fee. *(feasible; spec exists, not built)*
 - **Payment receipt image upload** — DONE for photos, but name-picker for @mentions etc.
 - **Sales rep invoice visibility** — should reps see only their own customers' invoices, only after delivery? *(question raised, not decided)*
-- **Custom-order pricing** — does the rep's estimate become the invoice, or is price set by admin/accounts at approval? *(question raised, not locked)*
+- **Custom-order pricing** — ~~question raised, not locked~~ → **DECIDED:** rep proposes; CEO/admin (or head of dept) approves the discount/custom price; the approved number becomes the invoice. Reps can propose discounts but never set final price. Two legs: sales proposes → leadership approves → accounts raises invoice with approved price.
 - **Support/HR channels** — keep fully private, or allow view-only from other depts? *(decided: private for now)*
 - **Real-time chat delivery** — currently new messages show on refresh/click, not auto-push.
 - **Unread badges on chat sidebar** — noted.
