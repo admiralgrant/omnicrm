@@ -309,3 +309,4 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .order-line { flex-wrap: wrap; }
   .order-line .inv-field { min-width: 140px; }
 }
+.chat-contact { display: flex; align-items: center; gap: 10px; width: 100%; }
