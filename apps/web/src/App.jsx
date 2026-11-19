@@ -1454,17 +1454,19 @@ export default function App() {
                   <>
                     <label className="inv-label" style={{ marginTop: 10 }}>Order items</label>
                     {orderForm.items.map((it, i) => (
-                      <div key={i} className="inv-item-row">
+                      <div key={i} className="order-line">
                         <div className="inv-field">
+                          <label className="inv-label">Product</label>
                           <select value={it.product_id} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, product_id: e.target.value } : x) })}>
                             <option value="">Select product…</option>
-                            {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.category ? ' · ' + p.category : ''}{p.sku ? ' (' + p.sku + ')' : ''} — ₦{p.unit_price}/${p.unit_price ? '' : '0'}</option>)}
+                            {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.category ? ' · ' + p.category : ''}{p.sku ? ' (' + p.sku + ')' : ''} — ₦{p.unit_price}</option>)}
                           </select>
                         </div>
-                        <div className="inv-field" style={{ flex: '0 0 76px' }}>
+                        <div className="inv-field" style={{ flex: '0 0 96px' }}>
+                          <label className="inv-label">Quantity</label>
                           <input type="number" min="1" placeholder="Qty" value={it.qty} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} />
                         </div>
-                        <button className="act-btn" onClick={() => setOrderForm({ ...orderForm, items: orderForm.items.filter((_, j) => j !== i) })}>✕</button>
+                        <button className="btn-ghost sm remove-line" onClick={() => setOrderForm({ ...orderForm, items: orderForm.items.filter((_, j) => j !== i) })}>Remove</button>
                       </div>
                     ))}
                     <button className="btn-ghost sm" onClick={() => setOrderForm({ ...orderForm, items: [...orderForm.items, { product_id: '', qty: 1 }] })}>+ Add product</button>
