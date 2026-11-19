@@ -321,6 +321,29 @@ const ordCols = db.prepare("PRAGMA table_info(orders)").all().map((c) => c.name)
 if (!ordCols.includes('kind')) db.exec("ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'catalog'");
 if (!ordCols.includes('payment_terms')) db.exec('ALTER TABLE orders ADD COLUMN payment_terms TEXT');
 
+// migration: dedupe DM conversations (member order must be canonical — sorted ids)
+const convCols = db.prepare("PRAGMA table_info(conversations)").all().map((c) => c.name);
+if (convCols.length) {
+  const dms = db.prepare("SELECT * FROM conversations WHERE kind = 'dm'").all();
+  const seen = new Map(); // canonical member json -> earliest id
+  for (const c of dms) {
+    let members;
+    try { members = JSON.parse(c.member_json || '[]').map(Number).filter((n) => !isNaN(n)); } catch { members = []; }
+    if (!members.length) continue;
+    members.sort((a, b) => a - b);
+    const key = JSON.stringify(members);
+    if (!seen.has(key)) {
+      seen.set(key, c.id);
+      db.prepare('UPDATE conversations SET member_json = ? WHERE id = ?').run(key, c.id); // canonicalize order
+    } else {
+      const keep = seen.get(key);
+      // move messages into the kept conversation, then delete the duplicate
+      db.prepare('UPDATE conversation_messages SET conversation_id = ? WHERE conversation_id = ?').run(keep, c.id);
+      db.prepare('DELETE FROM conversations WHERE id = ?').run(c.id);
+    }
+  }
+}
+
 // migration: internal mail (teams) — threads + messages + receipts + stock posts
 db.exec(`
 CREATE TABLE IF NOT EXISTS mail_threads (
