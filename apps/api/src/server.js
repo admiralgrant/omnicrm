@@ -429,6 +429,9 @@ app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
 
 // edit a draft invoice: due date, currency, or full line-item replacement (totals recomputed)
 app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
+    return reply.code(403).send({ error: 'Only admin or accounts can edit invoices.' });
+  }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   if (inv.status !== 'draft') return reply.code(400).send({ error: 'Only draft invoices can be edited. Void/re-issue after sending.' });
@@ -458,6 +461,10 @@ app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
+  // sales reps raise orders, not invoices — only admin/accountant/HR create invoices
+  if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
+    return reply.code(403).send({ error: 'Only admin or accounts can create invoices — sales reps raise orders instead.' });
+  }
   const { contact_id, due_date, items, currency } = req.body || {};
   if (!contact_id || !Array.isArray(items) || items.length === 0) return reply.code(400).send({ error: 'contact_id, due_date and items are required' });
   const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
@@ -489,6 +496,9 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 app.post('/invoices/:id/send', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
+    return reply.code(403).send({ error: 'Only admin or accounts can send invoices.' });
+  }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   db.prepare("UPDATE invoices SET status = 'sent' WHERE id = ?").run(inv.id);
@@ -499,6 +509,9 @@ app.post('/invoices/:id/send', { preHandler: requireAuth }, async (req, reply) =
 });
 
 app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
+    return reply.code(403).send({ error: 'Only admin or accounts can mark invoices paid.' });
+  }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
