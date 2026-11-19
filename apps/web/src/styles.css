@@ -225,3 +225,16 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .bn-item.active { color: var(--accent-deep); }
   .bn-item span { font-size: 19px; }
 }
+
+/* ---- orders workflow + notifications ---- */
+.inv-tag { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+.inv-tag.pending { background: #FFF3E0; color: #B8722A; }
+.inv-tag.approved { background: #E3F2FD; color: #1565C0; }
+.inv-tag.delivered { background: #E8F5E9; color: #2E7D32; }
+.inv-tag.paid { background: #E0F2F1; color: #00695C; }
+.inv-tag.rejected { background: #FFEBEE; color: #C62828; }
+.notif-wrap { position: relative; display: inline-block; }
+.notif-badge { background: #E85D75; color: #fff; border-radius: 999px; padding: 0 7px; font-size: 11px; margin-left: 3px; }
+.notif-panel { position: absolute; right: 0; top: 44px; width: min(420px, 92vw); background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px rgba(23,37,30,.14); padding: 14px; z-index: 40; max-height: 60vh; overflow-y: auto; }
+.notif-line { display: flex; gap: 8px; padding: 8px 4px; border-bottom: 1px solid #f0f3f0; align-items: flex-start; }
+.notif-line:last-child { border-bottom: 0; }
