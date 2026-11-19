@@ -1295,7 +1295,7 @@ app.post('/chat/conversations', { preHandler: requireAuth }, async (req, reply) 
     if (with_staff_id === req.user.staff_id) return reply.code(400).send({ error: 'Cannot DM yourself' });
     const other = db.prepare('SELECT id, name FROM staff WHERE id = ? AND user_id = ?').get(with_staff_id, req.user.id);
     if (!other) return reply.code(404).send({ error: 'Staff not found' });
-    const mem = JSON.stringify([req.user.staff_id, with_staff_id].filter(Boolean));
+    const mem = JSON.stringify([req.user.staff_id, with_staff_id].filter(Boolean).sort((a, b) => a - b));
     // reuse existing DM if present
     const existing = db.prepare('SELECT * FROM conversations WHERE user_id = ? AND kind = ? AND member_json = ?').get(req.user.id, 'dm', mem);
     if (existing) return { ok: true, id: existing.id, reused: true };
