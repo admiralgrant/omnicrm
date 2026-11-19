@@ -1218,6 +1218,114 @@ app.delete('/demo-links/:id', { preHandler: requireAuth }, async (req, reply) =>
   return { ok: true, revoked: existing.label || existing.token };
 });
 
+// ---- sales order workflow: reps raise orders, ops approves -> invoice -> delivery -> payment ----
+const isOps = (u) => !u.dept || u.dept === 'account' || u.dept === 'hr';
+
+const notify = (userId, staffId, kind, message) => {
+  db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (?, ?, ?, ?)')
+    .run(userId || null, staffId || null, kind, message);
+};
+
+app.get('/orders', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`SELECT o.*, c.company, c.name AS contact_name, s.name AS rep_name
+    FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id LEFT JOIN staff s ON s.id = o.staff_id
+    WHERE o.user_id = ? ORDER BY o.id DESC`).all(req.user.id)
+    .filter((o) => isOps(req.user) || o.staff_id === req.user.staff_id);
+  return { rows };
+});
+
+app.post('/orders', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  const { contact_id, items, note } = req.body || {};
+  if (!contact_id || !Array.isArray(items) || !items.length) {
+    return reply.code(400).send({ error: 'contact_id and items are required' });
+  }
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!contact) return reply.code(404).send({ error: 'Customer not found' });
+  // attribute to the rep who owns this customer (or the logged-in rep)
+  const staffId = req.user.staff_id || contact.staff_id || null;
+  const total = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+  const info = db.prepare(`INSERT INTO orders (user_id, staff_id, contact_id, items_json, total_ngn, status, note)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?)`)
+    .run(req.user.id, staffId, contact_id, JSON.stringify(items), total, note || null);
+  const rep = staffId ? db.prepare('SELECT name FROM staff WHERE id = ?').get(staffId) : null;
+  notify(req.user.id, null, 'order_raised',
+    `New order #${info.lastInsertRowid} for ${contact.company || contact.name} (${total.toLocaleString()} naira)${rep ? ' from ' + rep.name : ''} awaits approval.`);
+  return { ok: true, id: info.lastInsertRowid };
+});
+
+app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can approve orders' });
+  const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!o) return reply.code(404).send({ error: 'Order not found' });
+  if (o.status !== 'pending') return reply.code(400).send({ error: `Order is already ${o.status}` });
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
+  const items = JSON.parse(o.items_json);
+  // auto-raise the invoice (draft -> visible to the rep when delivered)
+  const n = db.prepare('SELECT COUNT(*) AS c FROM invoices WHERE user_id = ?').get(req.user.id).c;
+  const number = `INV-2026-${String(n + 1).padStart(3, '0')}`;
+  const due = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+  const inv = db.prepare(`INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, total, tax_rate, tax, currency, fx_rate, ngn_total)
+    VALUES (?, ?, ?, 'draft', date('now'), ?, ?, ?, 7.5, ?, 'NGN', 1, ?)`)
+    .run(req.user.id, o.contact_id, number, due, o.total_ngn, o.total_ngn * 1.075, o.total_ngn * 0.075, o.total_ngn);
+  for (const it of items) {
+    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
+      .run(inv.lastInsertRowid, it.name, it.qty, it.price, (Number(it.price) || 0) * (Number(it.qty) || 0));
+  }
+  db.prepare("UPDATE orders SET status = 'approved', invoice_id = ?, approved_at = datetime('now') WHERE id = ?")
+    .run(inv.lastInsertRowid, o.id);
+  notify(o.user_id, o.staff_id, 'order_approved',
+    `Order #${o.id} approved — invoice ${number} raised for ${contact.company || contact.name}.`);
+  return { ok: true, invoice: number };
+});
+
+app.post('/orders/:id/reject', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can reject orders' });
+  const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!o) return reply.code(404).send({ error: 'Order not found' });
+  db.prepare("UPDATE orders SET status = 'rejected' WHERE id = ?").run(o.id);
+  notify(o.user_id, o.staff_id, 'order_rejected', `Order #${o.id} was rejected.`);
+  return { ok: true };
+});
+
+app.post('/orders/:id/deliver', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can mark delivery' });
+  const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!o) return reply.code(404).send({ error: 'Order not found' });
+  if (o.status !== 'approved') return reply.code(400).send({ error: `Cannot deliver an order that is ${o.status}` });
+  db.prepare("UPDATE orders SET status = 'delivered', delivered_at = datetime('now') WHERE id = ?").run(o.id);
+  if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'sent' WHERE id = ?").run(o.invoice_id);
+  notify(o.user_id, o.staff_id, 'order_delivered',
+    `Order #${o.id} delivered — your invoice ${o.invoice_id ? '#' + o.invoice_id : ''} is now visible in your portal.`);
+  return { ok: true };
+});
+
+app.post('/orders/:id/payment', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can post payments' });
+  const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!o) return reply.code(404).send({ error: 'Order not found' });
+  const { ref } = req.body || {};
+  db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(ref || null, o.id);
+  if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ?").run(o.invoice_id);
+  notify(o.user_id, o.staff_id, 'payment_received',
+    `Payment received for order #${o.id} (${o.total_ngn.toLocaleString()} naira)${ref ? ' — ref ' + ref : ''}.`);
+  return { ok: true };
+});
+
+app.get('/notifications', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`SELECT * FROM notifications
+    WHERE (staff_id = ? OR (staff_id IS NULL AND user_id = ?)) ORDER BY id DESC LIMIT 40`)
+    .all(req.user.staff_id || null, req.user.id);
+  return { rows };
+});
+
+app.post('/notifications/read', { preHandler: requireAuth }, async (req) => {
+  const { id } = req.body || {};
+  if (id) db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(id);
+  else db.prepare('UPDATE notifications SET read = 1 WHERE staff_id = ?').run(req.user.staff_id || null);
+  return { ok: true };
+});
+
 // ---- commissions calculator (HR sees all; sales staff see their own) ----
 app.get('/commissions', { preHandler: requireAuth }, async (req) => {
   const isHr = !req.user.dept || req.user.dept === 'hr';
