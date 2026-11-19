@@ -1245,7 +1245,7 @@ app.get('/mail/threads/:id', { preHandler: requireAuth }, async (req) => {
   const t = db.prepare('SELECT * FROM mail_threads WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!t) return reply.code(404).send({ error: 'Thread not found' });
   const messages = db.prepare('SELECT m.*, s.name AS sender_name FROM mail_messages m LEFT JOIN staff s ON s.id = m.sender_staff_id WHERE m.thread_id = ? ORDER BY m.id ASC').all(t.id)
-    .map((m) => ({ ...m, mentions: JSON.parse(m.mentions_json || '[]') }));
+    .map((m) => ({ ...m, mentions: JSON.parse(m.mentions_json || '[]'), groups: JSON.parse(m.groups_json || '[]') }));
   return { thread: t, messages };
 });
 
@@ -1261,18 +1261,30 @@ app.post('/mail/threads/:id/messages', { preHandler: requireAuth }, async (req, 
   if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
   const t = db.prepare('SELECT * FROM mail_threads WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!t) return reply.code(404).send({ error: 'Thread not found' });
-  const { body, mentions } = req.body || {};
+  const { body, mentions, groups } = req.body || {};
   if (!body || !body.trim()) return reply.code(400).send({ error: 'Message body is required' });
   const mentionsArr = Array.isArray(mentions) ? mentions : [];
-  const info = db.prepare('INSERT INTO mail_messages (thread_id, sender_staff_id, body, mentions_json) VALUES (?, ?, ?, ?)')
-    .run(t.id, req.user.staff_id || null, body, JSON.stringify(mentionsArr));
-  // notify mentioned staff
-  for (const sid of mentionsArr) {
+  const groupsArr = Array.isArray(groups) ? groups : [];
+  // resolve group tags (@sales, @account, @inventory, @support, @hr) to staff ids
+  const resolved = [...mentionsArr];
+  for (const g of groupsArr) {
+    const members = db.prepare('SELECT id FROM staff WHERE user_id = ? AND department = ? AND can_login = 1').all(req.user.id, g);
+    for (const m of members) if (!resolved.includes(m.id)) resolved.push(m.id);
+  }
+  const info = db.prepare('INSERT INTO mail_messages (thread_id, sender_staff_id, body, mentions_json, groups_json) VALUES (?, ?, ?, ?, ?)')
+    .run(t.id, req.user.staff_id || null, body, JSON.stringify(resolved), JSON.stringify(groupsArr));
+  for (const sid of resolved) {
     if (sid === req.user.staff_id) continue;
     const userName = req.user.name || 'Someone';
-    notify(req.user.id, sid, 'mention', `${userName} mentioned you: ${body.slice(0, 120)}`);
+    notify(req.user.id, sid, 'mention', `${userName} mentioned you${groupsArr.length ? ' (' + groupsArr.join(', ') + ')' : ''}: ${body.slice(0, 120)}`);
   }
   return { ok: true, id: info.lastInsertRowid };
+});
+
+app.get('/staff/mentions', { preHandler: requireAuth }, async (req) => {
+  const staff = db.prepare('SELECT id, name, department FROM staff WHERE user_id = ? AND can_login = 1 ORDER BY name').all(req.user.id);
+  const groups = ['sales', 'support', 'inventory', 'hr', 'account'];
+  return { staff, groups };
 });
 
 // stock posts: inventory team posts daily levels; sales reps read them before raising orders
