@@ -244,3 +244,14 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .notif-pill { width: 100%; justify-content: center; font-size: 14px; }
   .notif-line span { font-size: 14px !important; }
 }
+
+/* ---- in-mail (teams) ---- */
+.mail-sections { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.mail-col { background: #f7faf8; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.mail-thread { display: flex; flex-direction: column; gap: 10px; }
+.mail-msg { max-width: 82%; background: #eef5f0; border-radius: 12px; padding: 10px 14px; }
+.mail-msg .muted { margin-bottom: 2px; }
+@media (max-width: 900px) {
+  .mail-sections { grid-template-columns: 1fr; }
+  .mail-msg { max-width: 94%; }
+}
