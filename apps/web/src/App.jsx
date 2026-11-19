@@ -636,16 +636,34 @@ export default function App() {
                 <label className="inv-label">Product name</label>
                 <input placeholder="e.g. Emulsion Paint — Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
                 <div className="inv-item-row">
-                  <input placeholder="SKU" value={prodForm.sku} onChange={(e) => setProdForm({ ...prodForm, sku: e.target.value })} />
-                  <input placeholder="Category" value={prodForm.category} onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })} />
+                  <div className="inv-field">
+                    <label className="inv-label">SKU (stock code)</label>
+                    <input placeholder="e.g. P-EMU-4L" value={prodForm.sku} onChange={(e) => setProdForm({ ...prodForm, sku: e.target.value })} />
+                  </div>
+                  <div className="inv-field">
+                    <label className="inv-label">Category</label>
+                    <input placeholder="e.g. Emulsion, Gloss, Primer" value={prodForm.category} onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })} />
+                  </div>
                 </div>
                 <div className="inv-item-row">
-                  <input type="number" min="0" placeholder="Stock qty" value={prodForm.stock} onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })} />
-                  <input type="number" min="0" placeholder="Low-stock alert at" value={prodForm.low_stock_at} onChange={(e) => setProdForm({ ...prodForm, low_stock_at: e.target.value })} />
+                  <div className="inv-field">
+                    <label className="inv-label">Stock quantity</label>
+                    <input type="number" min="0" placeholder="Units in store" value={prodForm.stock} onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })} />
+                  </div>
+                  <div className="inv-field">
+                    <label className="inv-label">Low-stock alert at</label>
+                    <input type="number" min="0" placeholder="Warn me below this" value={prodForm.low_stock_at} onChange={(e) => setProdForm({ ...prodForm, low_stock_at: e.target.value })} />
+                  </div>
                 </div>
                 <div className="inv-item-row">
-                  <input type="number" min="0" placeholder="Unit cost ₦" value={prodForm.unit_cost} onChange={(e) => setProdForm({ ...prodForm, unit_cost: e.target.value })} />
-                  <input type="number" min="0" placeholder="Unit price ₦" value={prodForm.unit_price} onChange={(e) => setProdForm({ ...prodForm, unit_price: e.target.value })} />
+                  <div className="inv-field">
+                    <label className="inv-label">Unit cost (₦)</label>
+                    <input type="number" min="0" placeholder="What it costs you" value={prodForm.unit_cost} onChange={(e) => setProdForm({ ...prodForm, unit_cost: e.target.value })} />
+                  </div>
+                  <div className="inv-field">
+                    <label className="inv-label">Unit price (₦)</label>
+                    <input type="number" min="0" placeholder="What customers pay" value={prodForm.unit_price} onChange={(e) => setProdForm({ ...prodForm, unit_price: e.target.value })} />
+                  </div>
                 </div>
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveProduct}>{prodForm.id ? 'Save changes' : 'Add product'}</button>
@@ -686,16 +704,34 @@ export default function App() {
                 <label className="inv-label">Product name</label>
                 <input placeholder="e.g. Emulsion Paint — Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
                 <div className="inv-item-row">
-                  <input placeholder="SKU" value={prodForm.sku} onChange={(e) => setProdForm({ ...prodForm, sku: e.target.value })} />
-                  <input placeholder="Category" value={prodForm.category} onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })} />
+                  <div className="inv-field">
+                    <label className="inv-label">SKU (stock code)</label>
+                    <input placeholder="e.g. P-EMU-4L" value={prodForm.sku} onChange={(e) => setProdForm({ ...prodForm, sku: e.target.value })} />
+                  </div>
+                  <div className="inv-field">
+                    <label className="inv-label">Category</label>
+                    <input placeholder="e.g. Emulsion, Gloss, Primer" value={prodForm.category} onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })} />
+                  </div>
                 </div>
                 <div className="inv-item-row">
-                  <input type="number" min="0" placeholder="Stock qty" value={prodForm.stock} onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })} />
-                  <input type="number" min="0" placeholder="Low-stock alert at" value={prodForm.low_stock_at} onChange={(e) => setProdForm({ ...prodForm, low_stock_at: e.target.value })} />
+                  <div className="inv-field">
+                    <label className="inv-label">Stock quantity</label>
+                    <input type="number" min="0" placeholder="Units in store" value={prodForm.stock} onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })} />
+                  </div>
+                  <div className="inv-field">
+                    <label className="inv-label">Low-stock alert at</label>
+                    <input type="number" min="0" placeholder="Warn me below this" value={prodForm.low_stock_at} onChange={(e) => setProdForm({ ...prodForm, low_stock_at: e.target.value })} />
+                  </div>
                 </div>
                 <div className="inv-item-row">
-                  <input type="number" min="0" placeholder="Unit cost ₦" value={prodForm.unit_cost} onChange={(e) => setProdForm({ ...prodForm, unit_cost: e.target.value })} />
-                  <input type="number" min="0" placeholder="Unit price ₦" value={prodForm.unit_price} onChange={(e) => setProdForm({ ...prodForm, unit_price: e.target.value })} />
+                  <div className="inv-field">
+                    <label className="inv-label">Unit cost (₦)</label>
+                    <input type="number" min="0" placeholder="What it costs you" value={prodForm.unit_cost} onChange={(e) => setProdForm({ ...prodForm, unit_cost: e.target.value })} />
+                  </div>
+                  <div className="inv-field">
+                    <label className="inv-label">Unit price (₦)</label>
+                    <input type="number" min="0" placeholder="What customers pay" value={prodForm.unit_price} onChange={(e) => setProdForm({ ...prodForm, unit_price: e.target.value })} />
+                  </div>
                 </div>
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveProduct}>{prodForm.id ? 'Save changes' : 'Add product'}</button>
@@ -1209,34 +1245,61 @@ export default function App() {
           <div className="card">
             <h3>{custForm.id ? '✏️ Edit customer' : '➕ Add customer'}</h3>
             <div className="inv-item-row">
-              <input placeholder="Contact name" value={custForm.name} onChange={(e) => setCustForm({ ...custForm, name: e.target.value })} />
-              <input placeholder="Company" value={custForm.company} onChange={(e) => setCustForm({ ...custForm, company: e.target.value })} />
+              <div className="inv-field">
+                <label className="inv-label">Contact name</label>
+                <input placeholder="e.g. Gloria Okon" value={custForm.name} onChange={(e) => setCustForm({ ...custForm, name: e.target.value })} />
+              </div>
+              <div className="inv-field">
+                <label className="inv-label">Company</label>
+                <input placeholder="e.g. Eko Maintenance Ltd" value={custForm.company} onChange={(e) => setCustForm({ ...custForm, company: e.target.value })} />
+              </div>
             </div>
             <div className="inv-item-row">
-              <input placeholder="Phone" value={custForm.phone} onChange={(e) => setCustForm({ ...custForm, phone: e.target.value })} />
-              <input placeholder="Email" value={custForm.email} onChange={(e) => setCustForm({ ...custForm, email: e.target.value })} />
+              <div className="inv-field">
+                <label className="inv-label">Phone</label>
+                <input placeholder="e.g. 08031234567" value={custForm.phone} onChange={(e) => setCustForm({ ...custForm, phone: e.target.value })} />
+              </div>
+              <div className="inv-field">
+                <label className="inv-label">Email</label>
+                <input placeholder="e.g. buyer@company.com" value={custForm.email} onChange={(e) => setCustForm({ ...custForm, email: e.target.value })} />
+              </div>
             </div>
             <div className="inv-item-row">
-              <input placeholder="Tags (comma-separated)" value={custForm.tags} onChange={(e) => setCustForm({ ...custForm, tags: e.target.value })} />
-              <select value={custForm.status} onChange={(e) => setCustForm({ ...custForm, status: e.target.value })}>
-                <option value="lead">Lead</option>
-                <option value="contacted">Contacted</option>
-                <option value="qualified">Qualified</option>
-                <option value="proposal_sent">Proposal sent</option>
-                <option value="negotiation">Negotiation</option>
-                <option value="won">Won</option>
-                <option value="lost">Lost</option>
-              </select>
+              <div className="inv-field">
+                <label className="inv-label">Tags (comma-separated)</label>
+                <input placeholder="e.g. fm, lekki, tier-1" value={custForm.tags} onChange={(e) => setCustForm({ ...custForm, tags: e.target.value })} />
+              </div>
+              <div className="inv-field">
+                <label className="inv-label">Pipeline stage</label>
+                <select value={custForm.status} onChange={(e) => setCustForm({ ...custForm, status: e.target.value })}>
+                  <option value="lead">Lead</option>
+                  <option value="contacted">Contacted</option>
+                  <option value="qualified">Qualified</option>
+                  <option value="proposal_sent">Proposal sent</option>
+                  <option value="negotiation">Negotiation</option>
+                  <option value="won">Won</option>
+                  <option value="lost">Lost</option>
+                </select>
+              </div>
             </div>
             <div className="inv-item-row">
-              <select value={custForm.staff_id || ''} onChange={(e) => setCustForm({ ...custForm, staff_id: e.target.value || null })}>
-                <option value="">Sales rep: unassigned</option>
-                {(hr?.staff || []).filter((s) => s.department === 'sales').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <div className="inv-field">
+                <label className="inv-label">Sales rep (gets the commission)</label>
+                <select value={custForm.staff_id || ''} onChange={(e) => setCustForm({ ...custForm, staff_id: e.target.value || null })}>
+                  <option value="">Unassigned</option>
+                  {(hr?.staff || []).filter((s) => s.department === 'sales').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
             </div>
             <div className="inv-item-row">
-              <input type="number" min="0" placeholder="Deal value ₦" value={custForm.deal_value_ngn} onChange={(e) => setCustForm({ ...custForm, deal_value_ngn: e.target.value })} />
-              <input type="number" min="0" placeholder="Debt ₦" value={custForm.debt_ngn} onChange={(e) => setCustForm({ ...custForm, debt_ngn: e.target.value })} />
+              <div className="inv-field">
+                <label className="inv-label">Deal value (₦)</label>
+                <input type="number" min="0" placeholder="Value of the deal" value={custForm.deal_value_ngn} onChange={(e) => setCustForm({ ...custForm, deal_value_ngn: e.target.value })} />
+              </div>
+              <div className="inv-field">
+                <label className="inv-label">Current debt (₦)</label>
+                <input type="number" min="0" placeholder="Outstanding balance" value={custForm.debt_ngn} onChange={(e) => setCustForm({ ...custForm, debt_ngn: e.target.value })} />
+              </div>
             </div>
             <div className="quick-actions">
               <button className="btn-primary" onClick={saveCustomer}>{custForm.id ? 'Save changes' : 'Add customer'}</button>
