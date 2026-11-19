@@ -323,6 +323,7 @@ if (!ordCols.includes('payment_terms')) db.exec('ALTER TABLE orders ADD COLUMN p
 
 // migration: dedupe DM conversations (member order must be canonical — sorted ids)
 const convCols = db.prepare("PRAGMA table_info(conversations)").all().map((c) => c.name);
+if (!convCols.includes('dept')) db.exec('ALTER TABLE conversations ADD COLUMN dept TEXT');
 if (convCols.length) {
   const dms = db.prepare("SELECT * FROM conversations WHERE kind = 'dm'").all();
   const seen = new Map(); // canonical member json -> earliest id
