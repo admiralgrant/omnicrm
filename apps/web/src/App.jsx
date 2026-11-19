@@ -1429,7 +1429,7 @@ export default function App() {
           <div className="card">
             <div className="inv-head">
               <h3>📦 Orders{opsMode ? '' : ' — yours'}</h3>
-              {!isGuest && <button className="btn-primary sm" onClick={() => setOrderForm({ contact_id: '', items: [{ name: '', qty: 1, price: 0 }], note: '' })}>+ Raise order</button>}
+              {!isGuest && <button className="btn-primary sm" onClick={() => setOrderForm({ contact_id: '', kind: 'catalog', items: [{ product_id: '', qty: 1 }], note: '', payment_terms: '' })}>+ Raise order</button>}
             </div>
             {orderForm && (
               <div className="card" style={{ background: '#f7faf8' }}>
@@ -1442,33 +1442,64 @@ export default function App() {
                       {(opsMode ? contacts : myContacts).map((c) => <option key={c.id} value={c.id}>{c.company || c.name}</option>)}
                     </select>
                   </div>
-                </div>
-                <label className="inv-label" style={{ marginTop: 10 }}>Order items</label>
-                <div className="inv-item-row" style={{ marginBottom: 0 }}>
-                  <div className="inv-field"><span className="muted" style={{ fontSize: 11 }}>Item</span></div>
-                  <div className="inv-field" style={{ flex: '0 0 76px' }}><span className="muted" style={{ fontSize: 11 }}>Qty</span></div>
-                  <div className="inv-field" style={{ flex: '0 0 118px' }}><span className="muted" style={{ fontSize: 11 }}>Unit price (₦)</span></div>
-                  <span style={{ width: 34 }} />
-                </div>
-                {orderForm.items.map((it, i) => (
-                  <div key={i} className="inv-item-row">
-                    <div className="inv-field">
-                      <input placeholder="e.g. Emulsion 20L" value={it.name} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, name: e.target.value } : x) })} />
-                    </div>
-                    <div className="inv-field" style={{ flex: '0 0 76px' }}>
-                      <input type="number" min="1" placeholder="Qty" value={it.qty} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} />
-                    </div>
-                    <div className="inv-field" style={{ flex: '0 0 118px' }}>
-                      <input type="number" min="0" placeholder="Unit price ₦" value={it.price} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, price: Number(e.target.value) } : x) })} />
-                    </div>
-                    <button className="act-btn" onClick={() => setOrderForm({ ...orderForm, items: orderForm.items.filter((_, j) => j !== i) })}>✕</button>
+                  <div className="inv-field">
+                    <label className="inv-label">Order type</label>
+                    <select value={orderForm.kind || 'catalog'} onChange={(e) => setOrderForm({ ...orderForm, kind: e.target.value })}>
+                      <option value="catalog">From catalog (registered products)</option>
+                      <option value="custom">Customised order (write what's needed)</option>
+                    </select>
                   </div>
-                ))}
-                <button className="btn-ghost sm" onClick={() => setOrderForm({ ...orderForm, items: [...orderForm.items, { name: '', qty: 1, price: 0 }] })}>+ line</button>
+                </div>
+                {orderForm.kind === 'catalog' ? (
+                  <>
+                    <label className="inv-label" style={{ marginTop: 10 }}>Order items</label>
+                    {orderForm.items.map((it, i) => (
+                      <div key={i} className="inv-item-row">
+                        <div className="inv-field">
+                          <select value={it.product_id} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, product_id: e.target.value } : x) })}>
+                            <option value="">Select product…</option>
+                            {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.category ? ' · ' + p.category : ''}{p.sku ? ' (' + p.sku + ')' : ''} — ₦{p.unit_price}/${p.unit_price ? '' : '0'}</option>)}
+                          </select>
+                        </div>
+                        <div className="inv-field" style={{ flex: '0 0 76px' }}>
+                          <input type="number" min="1" placeholder="Qty" value={it.qty} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} />
+                        </div>
+                        <button className="act-btn" onClick={() => setOrderForm({ ...orderForm, items: orderForm.items.filter((_, j) => j !== i) })}>✕</button>
+                      </div>
+                    ))}
+                    <button className="btn-ghost sm" onClick={() => setOrderForm({ ...orderForm, items: [...orderForm.items, { product_id: '', qty: 1 }] })}>+ Add product</button>
+                  </>
+                ) : (
+                  <div className="inv-field" style={{ marginTop: 10 }}>
+                    <label className="inv-label">Describe the customised work in detail</label>
+                    <textarea rows="3" placeholder="What exactly does the customer require? Include measurements, colours, delivery expectations, etc." value={orderForm.description || ''} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--line)', fontFamily: 'inherit', fontSize: 14 }} />
+                    <label className="inv-label" style={{ marginTop: 10 }}>Estimated value (₦, optional)</label>
+                    <input type="number" min="0" placeholder="Leave blank if you'll agree the price later" value={orderForm.amount_ngn || ''} onChange={(e) => setOrderForm({ ...orderForm, amount_ngn: Number(e.target.value) })} />
+                  </div>
+                )}
+                <div className="inv-item-row" style={{ marginTop: 10 }}>
+                  <div className="inv-field">
+                    <label className="inv-label">Payment terms</label>
+                    <input placeholder="e.g. Half now, half on delivery" value={orderForm.payment_terms || ''} onChange={(e) => setOrderForm({ ...orderForm, payment_terms: e.target.value })} />
+                  </div>
+                </div>
+                <div className="inv-item-row">
+                  <div className="inv-field">
+                    <label className="inv-label">Notes (delivery / instructions)</label>
+                    <input placeholder="e.g. Deliver within 24 hours to the Lekki site" value={orderForm.note || ''} onChange={(e) => setOrderForm({ ...orderForm, note: e.target.value })} />
+                  </div>
+                </div>
                 <div className="inv-item-row">
                   <button className="btn-primary sm" onClick={async () => {
                     try {
-                      await api('/orders', { method: 'POST', body: JSON.stringify({ contact_id: Number(orderForm.contact_id), items: orderForm.items.filter((x) => x.name && x.price > 0), note: orderForm.note }) });
+                      const body = { contact_id: Number(orderForm.contact_id), kind: orderForm.kind || 'catalog', note: orderForm.note, payment_terms: orderForm.payment_terms };
+                      if ((orderForm.kind || 'catalog') === 'catalog') {
+                        body.items = orderForm.items.filter((x) => x.product_id);
+                      } else {
+                        body.description = orderForm.description;
+                        body.amount_ngn = orderForm.amount_ngn;
+                      }
+                      await api('/orders', { method: 'POST', body: JSON.stringify(body) });
                       setOrderForm(null);
                       setOrders((await api('/orders')).rows);
                       setNotifs((await api('/notifications')).rows);
