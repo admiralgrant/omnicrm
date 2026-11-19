@@ -1567,7 +1567,8 @@ export default function App() {
               <>
                 <div className="inv-head">
                   <h3>🧾 Invoicing</h3>
-                  {!isGuest && <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>}
+                  {!isGuest && opsMode && <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>}
+                  {!opsMode && <span className="muted" style={{ fontSize: 12 }}>Invoices are raised by admin/accounts — you raise orders.</span>}
                 </div>
                 <div className="kpis">
                   <div className="kpi"><div className="label">Receivables</div><div className="value">{fmt(receivables)}</div></div>
@@ -1728,10 +1729,10 @@ export default function App() {
                   )}
                 </div>
                 <div className="inv-actions">
-                  {!isGuest && activeInv.status === 'draft' && <button className="btn-primary act-primary" onClick={sendInvoice}>Mark as sent</button>}
-                  {!isGuest && (activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid ✓</button>}
+                  {!isGuest && opsMode && activeInv.status === 'draft' && <button className="btn-primary act-primary" onClick={sendInvoice}>Mark as sent</button>}
+                  {!isGuest && opsMode && (activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid ✓</button>}
                   <div className="inv-actions-grid">
-                    {!isGuest && activeInv.status !== 'paid' && (
+                    {!isGuest && opsMode && activeInv.status !== 'paid' && (
                       <>
                         <button className="act-btn" onClick={shareWhatsApp}><span>💬</span>WhatsApp</button>
                         <button className="act-btn" onClick={copyPayLink}><span>🔗</span>Copy link</button>
@@ -1739,7 +1740,7 @@ export default function App() {
                     )}
                     <button className="act-btn" onClick={downloadPdf}><span>⬇️</span>PDF</button>
                     <button className="act-btn" onClick={emailInvoice}><span>✉️</span>Email</button>
-                    {!isGuest && activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span>✏️</span>Edit</button>}
+                    {!isGuest && opsMode && activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span>✏️</span>Edit</button>}
                   </div>
                 </div>
               </>
