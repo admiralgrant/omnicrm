@@ -456,9 +456,9 @@ export default function App() {
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
               ))}
             </div>
-            <div className="notif-wrap">
-              <button className="pill" onClick={() => setNotifOpen(!notifOpen)}>
-                🔔 {notifs.filter((n) => !n.read).length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read).length}</b>}
+            <div className="notif-bar">
+              <button className="pill notif-pill" onClick={() => setNotifOpen(!notifOpen)}>
+                🔔 Notifications{notifs.filter((n) => !n.read).length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read).length}</b>}
               </button>
               {notifOpen && (
                 <div className="notif-panel">
