@@ -368,6 +368,10 @@ CREATE INDEX IF NOT EXISTS idx_receipts_staff ON payment_receipts(staff_id);
 const mmCols = db.prepare("PRAGMA table_info(mail_messages)").all().map((c) => c.name);
 if (!mmCols.includes('groups_json')) db.exec("ALTER TABLE mail_messages ADD COLUMN groups_json TEXT NOT NULL DEFAULT '[]'");
 
+// migration: actionable notifications — deep-link to the right screen
+const notifCols = db.prepare("PRAGMA table_info(notifications)").all().map((c) => c.name);
+if (!notifCols.includes('link_json')) db.exec("ALTER TABLE notifications ADD COLUMN link_json TEXT");
+
 // migration: modern chat interface — conversations (DMs + group channels)
 db.exec(`
 CREATE TABLE IF NOT EXISTS conversations (
