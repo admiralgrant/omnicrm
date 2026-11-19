@@ -292,3 +292,6 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .chat-window { height: 58%; }
   .bubble { max-width: 85%; }
 }
+.notif-go { color: #1E7F7A; font-weight: 700; margin-left: 4px; }
+.notif-line { cursor: default; }
+.notif-line:hover { background: #f0f7f2; border-radius: 8px; }
