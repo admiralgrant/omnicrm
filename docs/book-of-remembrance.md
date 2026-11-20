@@ -44,6 +44,7 @@ Say **"book of remembrance"** and I pull this up.
 - **Support/HR channels** — keep fully private, or allow view-only from other depts? *(decided: private for now)*
 - **Real-time chat delivery** — currently new messages show on refresh/click, not auto-push.
 - **Unread badges on chat sidebar** — noted.
+- **AI gap-analysis ("AI does the heavy lifting" on hero)** — LIVE: (1) AI follow-up engine `/ai/followups` — scans due/lapsed follow-ups, prioritizes, pre-drafts messages from contact state; (2) AI Draft `/ai/draft` — WhatsApp inbox "✦ AI Draft" next-best reply; (3) AI Activity Report `/ai/report` — daily/weekly/monthly/quarterly, org + per-department, fed by Feedback. PROMISED BUT NOT BUILT: Ads Studio AI (copy/creative/audience, budget shifts — spec in docs/ads-module.md), "AI drafts + invoicing". NOTE: all live AI is rule-based template logic (deterministic, no LLM yet); `/ai/*` endpoints structured so an LLM (GPT/Claude/DeepSeek) can be plugged in later.
 - **Permanent domain** — replace trycloudflare tunnel with a real domain.
 - **Capacitor mobile app packaging** — iOS/Android.
 - **Gmail/SMTP auto-send for invoices & order-stage emails** — currently mailto draft + in-app notifs.
