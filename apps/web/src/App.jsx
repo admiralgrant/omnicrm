@@ -117,6 +117,11 @@ export default function App() {
   const [invEdit, setInvEdit] = useState(null); // draft invoice edit state
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow menu
   const [loading, setLoading] = useState(true);
+  const [invTab, setInvTab] = useState('stock'); // inventory tabs: stock | movements | digest
+  const [movements, setMovements] = useState([]);
+  const [digest, setDigest] = useState(null);
+  const [digestPeriod, setDigestPeriod] = useState('daily');
+  const [stockInForm, setStockInForm] = useState(null); // { product_id, qty, note }
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
@@ -513,6 +518,9 @@ export default function App() {
                             } else if (link.view === 'dashboard') {
                               setView('dashboard');
                               setDept(link.dept || 'sales');
+                            } else if (link.view === 'inventory') {
+                              setView('dashboard');
+                              setDept('inventory');
                             }
                           } else if (n.kind === 'mention') {
                             // older mention without a link — still open the chat
@@ -529,7 +537,7 @@ export default function App() {
                           setNotifs((await api('/notifications')).rows);
                         } catch (e) { console.error(e); }
                       }}>
-                      <span>{n.kind === 'payment_received' ? '💰' : n.kind === 'order_delivered' ? '🚚' : n.kind === 'order_approved' ? '✅' : n.kind === 'order_rejected' ? '✕' : n.kind === 'mention' ? '💬' : n.kind === 'stock_update' ? '📦' : n.kind === 'receipt' ? '🧾' : '📦'}</span>
+                      <span>{n.kind === 'payment_received' ? '💰' : n.kind === 'order_delivered' ? '🚚' : n.kind === 'order_approved' ? '✅' : n.kind === 'order_rejected' ? '✕' : n.kind === 'mention' ? '💬' : n.kind === 'stock_update' ? '📦' : n.kind === 'receipt' ? '🧾' : n.kind === 'inventory_digest' ? '📊' : '📦'}</span>
                       <span style={{ fontSize: 13 }}>{n.message} {n.link && <span className="notif-go">→</span>}</span>
                     </div>
                   ))}
@@ -723,23 +731,107 @@ export default function App() {
                   <div className="kpi"><div className="label">Low-stock alerts</div><div className="value">{lowCount}</div></div>
                   <div className="kpi"><div className="label">SKUs tracked</div><div className="value">{products.length}</div></div>
                 </div>
-                <div className="card">
-                  <div className="inv-head"><h3>📦 Inventory</h3><button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div>
-                  {products.map((p) => (
-                    <div key={p.id} className="inv-row">
-                      <div className="thread-ava">📦</div>
-                      <div className="thread-info">
-                        <b>{p.name}</b>
-                        <span>{p.sku} · {p.category} · alert at {p.low_stock_at}</span>
+                <div className="dept-pills">
+                  <button className={`pill ${invTab === 'stock' ? 'active' : ''}`} onClick={() => setInvTab('stock')}>Stock</button>
+                  <button className={`pill ${invTab === 'movements' ? 'active' : ''}`} onClick={async () => { setInvTab('movements'); setMovements((await api('/stock/movements?days=30')).rows); }}>Movements</button>
+                  <button className={`pill ${invTab === 'digest' ? 'active' : ''}`} onClick={async () => { setInvTab('digest'); setDigest((await api(`/ai/inventory-digest?period=${digestPeriod}`)).digest); }}>AI Digest</button>
+                </div>
+                {invTab === 'stock' && (stockInForm ? (
+                  <div className="card">
+                    <h3>📥 Stock in — new stock received</h3>
+                    <label className="inv-label">Product</label>
+                    <select value={stockInForm.product_id} onChange={(e) => setStockInForm({ ...stockInForm, product_id: e.target.value })}>
+                      <option value="">Select product…</option>
+                      {products.map((p) => <option key={p.id} value={p.id}>{p.name} (now: {p.stock})</option>)}
+                    </select>
+                    <div className="inv-item-row">
+                      <div className="inv-field">
+                        <label className="inv-label">Quantity added</label>
+                        <input type="number" min="1" placeholder="e.g. 20" value={stockInForm.qty} onChange={(e) => setStockInForm({ ...stockInForm, qty: e.target.value })} />
                       </div>
-                      <div className="inv-right">
-                        <div className="inv-amt">{p.stock} units</div>
-                        {p.low && <span className="chip low">low stock</span>}
-                        <button className="btn-ghost sm" onClick={() => openEditProduct(p)}>✏️ Edit</button>
+                      <div className="inv-field">
+                        <label className="inv-label">Note</label>
+                        <input placeholder="Supplier / waybill…" value={stockInForm.note} onChange={(e) => setStockInForm({ ...stockInForm, note: e.target.value })} />
                       </div>
                     </div>
-                  ))}
-                </div>
+                    <div className="quick-actions">
+                      <button className="btn-primary" onClick={async () => {
+                        if (!stockInForm.product_id || !(Number(stockInForm.qty) > 0)) { alert('Pick a product and enter a quantity'); return; }
+                        await api('/stock/in', { method: 'POST', body: JSON.stringify(stockInForm) });
+                        setStockInForm(null);
+                        const p = await api('/products'); setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
+                      }}>Add stock</button>
+                      <button className="btn-ghost" onClick={() => setStockInForm(null)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="card">
+                    <div className="inv-head"><h3>📦 Inventory</h3><div><button className="btn-ghost sm" onClick={() => setStockInForm({ product_id: '', qty: 1, note: '' })}>📥 Stock in</button> <button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div></div>
+                    {products.map((p) => (
+                      <div key={p.id} className="inv-row">
+                        <div className="thread-ava">📦</div>
+                        <div className="thread-info">
+                          <b>{p.name}</b>
+                          <span>{p.sku} · {p.category} · alert at {p.low_stock_at}</span>
+                        </div>
+                        <div className="inv-right">
+                          <div className="inv-amt">{p.stock} units</div>
+                          {p.low && <span className="chip low">low stock</span>}
+                          <button className="btn-ghost sm" onClick={() => openEditProduct(p)}>✏️ Edit</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {invTab === 'movements' && (
+                  <div className="card">
+                    <div className="inv-head"><h3>🔁 Stock movements — last 30 days</h3>
+                      <div>
+                        <button className="btn-ghost sm" onClick={async () => setMovements((await api('/stock/movements?days=30')).rows)}>All</button>
+                        <button className="btn-ghost sm" onClick={async () => setMovements((await api('/stock/movements?days=30&direction=in')).rows)}>In only</button>
+                        <button className="btn-ghost sm" onClick={async () => setMovements((await api('/stock/movements?days=30&direction=out')).rows)}>Out only</button>
+                      </div>
+                    </div>
+                    {movements.length === 0 && <p className="muted">No movements recorded yet.</p>}
+                    {movements.map((m) => (
+                      <div key={m.id} className="inv-row">
+                        <div className="thread-ava">{m.direction === 'in' ? '📥' : '📤'}</div>
+                        <div className="thread-info">
+                          <b>{m.product_name}</b>
+                          <span>{m.direction === 'in' ? '+' : '−'}{m.qty} · {m.reason}{m.ref_type && m.ref_id ? ` · ${m.ref_type} #${m.ref_id}` : ''}{m.note ? ' · ' + m.note : ''}</span>
+                        </div>
+                        <div className="inv-right muted" style={{ fontSize: 12 }}>{(m.created_at || '').slice(0, 16)}{m.by_name ? ' · ' + m.by_name : ''}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {invTab === 'digest' && (
+                  <div className="card">
+                    <h3>📊 AI Inventory Digest</h3>
+                    <div className="dept-pills">
+                      {[['daily', 'Today'], ['weekly', 'Week'], ['monthly', 'Month'], ['quarterly', 'Quarter'], ['biannual', 'Half-year'], ['year', 'Year-end']].map(([k, label]) => (
+                        <button key={k} className={`pill ${digestPeriod === k ? 'active' : ''}`} onClick={async () => { setDigestPeriod(k); setDigest((await api(`/ai/inventory-digest?period=${k}`)).digest); }}>{label}</button>
+                      ))}
+                    </div>
+                    {!digest && <button className="btn-primary" onClick={async () => setDigest((await api(`/ai/inventory-digest?period=${digestPeriod}`)).digest)}>Generate digest</button>}
+                    {digest && (
+                      <div className="report">
+                        <h3 style={{ marginTop: 10 }}>{digest.label}: +{digest.added} in · −{digest.sold} out</h3>
+                        <ul className="ads-list">
+                          <li>{digest.skus} SKUs tracked · stock value {fmt(digest.stock_value)} (cost)</li>
+                          <li>{digest.low_count} low-stock item{digest.low_count === 1 ? '' : 's'} needing reorder</li>
+                          {digest.negatives.length > 0 && <li style={{ color: '#c0392b' }}>⚠️ Negative stock: {digest.negatives.join(', ')}</li>}
+                        </ul>
+                        {digest.additions.length > 0 && <b style={{ display: 'block', marginTop: 8 }}>📥 Added</b>}
+                        {digest.additions.map((a, i) => <div key={i} className="inv-line muted"><span>{a.product}</span><span>+{a.qty}</span></div>)}
+                        {digest.sold_items.length > 0 && <b style={{ display: 'block', marginTop: 8 }}>📤 Sold</b>}
+                        {digest.sold_items.map((s, i) => <div key={i} className="inv-line muted"><span>{s.product}</span><span>−{s.qty}</span></div>)}
+                        {digest.low_items.length > 0 && <b style={{ display: 'block', marginTop: 8 }}>⚠️ Low stock</b>}
+                        {digest.low_items.map((l, i) => <div key={i} className="inv-line muted"><span>{l.product}</span><span>{l.stock} left (alert at {l.alert_at})</span></div>)}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             ))}
 
@@ -1942,7 +2034,7 @@ export default function App() {
           <div className="card">
             <h3>📊 AI Activity Report</h3>
             <div className="dept-pills">
-              {[['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly']].map(([k, label]) => (
+              {[['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['biannual', 'Biannual'], ['year', 'Year-end']].map(([k, label]) => (
                 <button key={k} className={`pill ${reportPeriod === k ? 'active' : ''}`} onClick={() => { setReportPeriod(k); setReport(null); }}>
                   {label}
                 </button>
@@ -1953,7 +2045,7 @@ export default function App() {
             </button>
             {report && (
               <div className="report">
-                <p className="muted">Generated {new Date(report.generated_at).toLocaleString()} · covers last {report.period === 'daily' ? '1 day' : report.period === 'weekly' ? '7 days' : report.period === 'monthly' ? '30 days' : '90 days'}</p>
+                <p className="muted">Generated {new Date(report.generated_at).toLocaleString()} · covers last {report.period === 'daily' ? '1 day' : report.period === 'weekly' ? '7 days' : report.period === 'monthly' ? '30 days' : report.period === 'quarterly' ? '90 days' : report.period === 'biannual' ? '182 days' : '365 days'}</p>
                 {report.sections.map((s) => (
                   <div key={s.scope}>
                     <h3 style={{ marginTop: 14 }}>{s.title}</h3>
