@@ -327,6 +327,12 @@ app.put('/products/:id', { preHandler: requireAuth }, async (req, reply) => {
   const existing = db.prepare('SELECT * FROM products WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return reply.code(404).send({ error: 'Product not found' });
   const { name, sku, category, stock, low_stock_at, unit_cost, unit_price } = req.body || {};
+  // ledger consistency: any manual stock change on the product form becomes an adjustment movement
+  if (stock !== undefined && Number(stock) !== Number(existing.stock)) {
+    const delta = Number(stock) - Number(existing.stock);
+    stockMove(req.user.id, existing.id, delta > 0 ? 'in' : 'out', Math.abs(delta), 'adjustment', null, null,
+      `Manual stock correction ${delta > 0 ? '+' : ''}${delta} (edited on product form)`, req.user.staff_id);
+  }
   db.prepare('UPDATE products SET name = ?, sku = ?, category = ?, stock = ?, low_stock_at = ?, unit_cost = ?, unit_price = ? WHERE id = ? AND user_id = ?')
     .run(name ?? existing.name, sku ?? existing.sku, category ?? existing.category, Number(stock ?? existing.stock), Number(low_stock_at ?? existing.low_stock_at), Number(unit_cost ?? existing.unit_cost), Number(unit_price ?? existing.unit_price), req.params.id, req.user.id);
   return { product: db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id) };
@@ -514,6 +520,17 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
   }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  // stock deduction for standalone invoices: goods certainly left once payment lands (order-flow invoices deducted at delivery)
+  if (!inv.stock_moved) {
+    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? AND product_id IS NOT NULL').all(inv.id);
+    for (const it of items) {
+      if (!(Number(it.qty) > 0)) continue;
+      const onHand = db.prepare('SELECT stock FROM products WHERE id = ?').get(it.product_id)?.stock ?? 0;
+      const note = Number(it.qty) > onHand ? `Insufficient stock at payment (had ${onHand}) — investigate` : null;
+      stockMove(inv.user_id, it.product_id, 'out', Number(it.qty), 'sale', 'invoice', inv.id, note, req.user.staff_id);
+    }
+    db.prepare('UPDATE invoices SET stock_moved = 1 WHERE id = ?').run(inv.id);
+  }
   db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
     .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()} ≈ ₦${Number(inv.ngn_total || inv.total).toLocaleString()}) paid ✅`);
@@ -723,7 +740,7 @@ app.get('/pipeline', { preHandler: requireAuth }, async (req) => {
 // ---- AI reporting engine (rule-based; compiled on prompt) ----
 app.get('/ai/report', { preHandler: requireAuth }, async (req, reply) => {
   const { period, scope } = req.query || {};
-  const days = { daily: 1, weekly: 7, monthly: 30, quarterly: 90 }[period] || 1;
+  const days = { daily: 1, weekly: 7, monthly: 30, quarterly: 90, biannual: 182, year: 365 }[period] || 1;
   const since = new Date(Date.now() - days * 864e5).toISOString();
   const uid = req.user.id;
   const q = (sql, ...p) => db.prepare(sql).all(...p);
@@ -1243,6 +1260,46 @@ app.get('/me/contacts', { preHandler: requireAuth }, async (req) => {
   return { rows };
 });
 
+// ---- stock movement ledger: the truth of what came in and what was sold ----
+const stockMove = (userId, productId, direction, qty, reason, refType, refId, note, createdBy) => {
+  db.prepare(`INSERT INTO stock_movements (user_id, product_id, direction, qty, reason, ref_type, ref_id, note, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(userId, productId, direction, qty, reason, refType || null, refId || null, note || null, createdBy || null);
+  const delta = direction === 'in' ? qty : -qty;
+  db.prepare('UPDATE products SET stock = stock + ? WHERE id = ? AND user_id = ?').run(delta, productId, userId);
+  return db.prepare('SELECT stock FROM products WHERE id = ?').get(productId)?.stock ?? null;
+};
+
+// stock in (purchase / restock): inventory team or ops
+app.post('/stock/in', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  if (!isOps(req.user) && req.user.dept !== 'inventory') return reply.code(403).send({ error: 'Only admin or inventory staff can add stock' });
+  const { product_id, qty, note } = req.body || {};
+  const prod = db.prepare('SELECT * FROM products WHERE id = ? AND user_id = ?').get(product_id, req.user.id);
+  if (!prod) return reply.code(404).send({ error: 'Product not found' });
+  const n = Number(qty);
+  if (!(n > 0)) return reply.code(400).send({ error: 'qty must be a positive number' });
+  const newStock = stockMove(req.user.id, prod.id, 'in', n, 'purchase', 'purchase', null, note || 'Stock purchase', req.user.staff_id);
+  // real-time ping: sales reps + inventory team so everyone knows it's in
+  const reps = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'sales'").all(req.user.id);
+  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `📥 ${n} × ${prod.name} added — ${newStock} on hand.`, { view: 'dashboard', dept: 'inventory' });
+  const inv = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'inventory'").all(req.user.id);
+  for (const s of inv) if (s.id !== req.user.staff_id) notify(req.user.id, s.id, 'stock_update', `📥 ${n} × ${prod.name} added — ${newStock} on hand.`, { view: 'inventory' });
+  return { ok: true, stock: newStock };
+});
+
+// movement ledger (last N days, optional direction filter)
+app.get('/stock/movements', { preHandler: requireAuth }, async (req) => {
+  const days = Number(req.query.days) || 30;
+  const dir = req.query.direction === 'in' || req.query.direction === 'out' ? req.query.direction : null;
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  const rows = db.prepare(`SELECT m.*, p.name AS product_name, p.sku, s.name AS by_name
+    FROM stock_movements m JOIN products p ON p.id = m.product_id LEFT JOIN staff s ON s.id = m.created_by
+    WHERE m.user_id = ? AND m.created_at >= ? ${dir ? 'AND m.direction = ?' : ''}
+    ORDER BY m.id DESC LIMIT 200`).all(req.user.id, since, ...(dir ? [dir] : []));
+  return { rows };
+});
+
 // internal mail / stock / receipts use the same ops gate as orders — declare it up front
 const isOps = (u) => !u.dept || u.dept === 'account' || u.dept === 'hr';
 const notify = (userId, staffId, kind, message, link) => {
@@ -1582,8 +1639,8 @@ app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) 
     VALUES (?, ?, ?, 'draft', date('now'), ?, ?, ?, 7.5, ?, 'NGN', 1, ?)`)
     .run(req.user.id, o.contact_id, number, due, o.total_ngn, o.total_ngn * 1.075, o.total_ngn * 0.075, o.total_ngn);
   for (const it of items) {
-    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
-      .run(inv.lastInsertRowid, it.name, it.qty, it.price, (Number(it.price) || 0) * (Number(it.qty) || 0));
+    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(inv.lastInsertRowid, it.name, it.qty, it.price, (Number(it.price) || 0) * (Number(it.qty) || 0), it.product_id || null);
   }
   db.prepare("UPDATE orders SET status = 'approved', invoice_id = ?, approved_at = datetime('now') WHERE id = ?")
     .run(inv.lastInsertRowid, o.id);
@@ -1609,6 +1666,17 @@ app.post('/orders/:id/deliver', { preHandler: requireAuth }, async (req, reply) 
   if (o.status !== 'approved') return reply.code(400).send({ error: `Cannot deliver an order that is ${o.status}` });
   db.prepare("UPDATE orders SET status = 'delivered', delivered_at = datetime('now') WHERE id = ?").run(o.id);
   if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'sent' WHERE id = ?").run(o.invoice_id);
+  // ---- stock deduction: delivery confirmation is the moment goods leave the store ----
+  if (o.kind !== 'custom') {
+    const items = JSON.parse(o.items_json || '[]');
+    for (const it of items) {
+      if (!it.product_id || !(Number(it.qty) > 0)) continue;
+      const onHand = db.prepare('SELECT stock FROM products WHERE id = ?').get(it.product_id)?.stock ?? 0;
+      const note = Number(it.qty) > onHand ? `Insufficient stock at delivery (had ${onHand}) — investigate` : null;
+      stockMove(o.user_id, it.product_id, 'out', Number(it.qty), 'sale', 'order', o.id, note, req.user.staff_id);
+    }
+    if (o.invoice_id) db.prepare('UPDATE invoices SET stock_moved = 1 WHERE id = ?').run(o.invoice_id);
+  }
   notify(o.user_id, o.staff_id, 'order_delivered',
     `Order #${o.id} delivered — your invoice ${o.invoice_id ? '#' + o.invoice_id : ''} is now visible in your portal.`,
     { view: 'orders', id: o.id });
@@ -1619,6 +1687,7 @@ app.post('/orders/:id/payment', { preHandler: requireAuth }, async (req, reply) 
   if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can post payments' });
   const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!o) return reply.code(404).send({ error: 'Order not found' });
+  if (o.status !== 'delivered') return reply.code(400).send({ error: `Cannot take payment for an order that is ${o.status} — it must be delivered first` });
   const { ref } = req.body || {};
   db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(ref || null, o.id);
   if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ?").run(o.invoice_id);
@@ -1666,8 +1735,104 @@ app.get('/commissions', { preHandler: requireAuth }, async (req) => {
   return { period, rows };
 });
 
+// ---- inventory AI digest: what came in, what was sold, what's low — per period ---- 
+const DIGEST_PERIODS = { daily: 1, weekly: 7, monthly: 30, quarterly: 90, biannual: 182, year: 365 };
+const DIGEST_LABELS = { daily: 'Today', weekly: 'This week', monthly: 'This month', quarterly: 'This quarter', biannual: 'This half-year', year: 'This year' };
+
+const buildInventoryDigest = (userId, period) => {
+  const days = DIGEST_PERIODS[period] || 1;
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  const moves = db.prepare(`SELECT m.*, p.name AS product_name FROM stock_movements m JOIN products p ON p.id = m.product_id
+    WHERE m.user_id = ? AND m.created_at >= ? ORDER BY m.id DESC`).all(userId, since);
+  const ins = moves.filter((m) => m.direction === 'in');
+  const outs = moves.filter((m) => m.direction === 'out');
+  const sumQty = (arr) => arr.reduce((s, m) => s + Number(m.qty), 0);
+  const prods = db.prepare('SELECT * FROM products WHERE user_id = ?').all(userId);
+  const low = prods.filter((p) => p.stock <= p.low_stock_at);
+  const soldMap = {};
+  for (const m of outs) soldMap[m.product_name] = (soldMap[m.product_name] || 0) + Number(m.qty);
+  return {
+    period, label: DIGEST_LABELS[period], since,
+    added: sumQty(ins), sold: sumQty(outs),
+    additions: ins.slice(0, 5).map((m) => ({ product: m.product_name, qty: m.qty, at: m.created_at })),
+    sold_items: Object.entries(soldMap).map(([product, qty]) => ({ product, qty })).sort((a, b) => b.qty - a.qty).slice(0, 5),
+    low_count: low.length,
+    low_items: low.slice(0, 5).map((p) => ({ product: p.name, stock: p.stock, alert_at: p.low_stock_at })),
+    stock_value: prods.reduce((s, p) => s + p.stock * p.unit_cost, 0),
+    skus: prods.length,
+    negatives: prods.filter((p) => p.stock < 0).map((p) => p.name),
+  };
+};
+
+app.get('/ai/inventory-digest', { preHandler: requireAuth }, async (req) => {
+  const period = Object.keys(DIGEST_PERIODS).includes(req.query.period) ? req.query.period : 'daily';
+  return { digest: buildInventoryDigest(req.user.id, period) };
+});
+
+// push a digest to its audiences: inventory, sales, support staff + owner/CEO (staff_id NULL)
+const pushDigest = (uid, d) => {
+  const headline = d.period === 'daily'
+    ? `📦 Inventory today: +${d.added} in · −${d.sold} out`
+    : `📦 ${d.label} inventory: +${d.added} in · −${d.sold} out`;
+  const bits = [headline];
+  if (d.low_count) bits.push(`⚠️ ${d.low_count} low-stock: ${d.low_items.map((i) => `${i.product} (${i.stock})`).join(', ')}`);
+  if (d.negatives.length) bits.push(`❌ Negative stock: ${d.negatives.join(', ')}`);
+  bits.push(`Stock value ₦${Number(d.stock_value).toLocaleString()}`);
+  const message = bits.join(' · ');
+  const staffs = db.prepare('SELECT id, department FROM staff WHERE user_id = ?').all(uid);
+  const targets = staffs.filter((s) => ['inventory', 'sales', 'support'].includes(s.department));
+  for (const s of targets) notify(uid, s.id, 'inventory_digest', message, { view: s.department === 'inventory' ? 'inventory' : 'dashboard' });
+  notify(uid, null, 'inventory_digest', message, { view: 'inventory' }); // owner / CEO
+};
+
+// in-app scheduler: every tick, if it's the 08:00–08:59 Lagos window, fire due digests per org
+const lagosNow = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Lagos' }));
+const digestKey = (period, now) => {
+  const y = now.getFullYear(), m = now.getMonth() + 1, d = now.getDate();
+  if (period === 'daily') return now.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+  if (period === 'weekly') { const wk = Math.floor((d - 1) / 7); return `${y}-${m}-w${wk + 1}`; }
+  if (period === 'monthly') return `${y}-${m}`;
+  if (period === 'quarterly') return `${y}-q${Math.floor(m / 3.0001) + 1}`;
+  if (period === 'biannual') return `${y}-h${m <= 6 ? 1 : 2}`;
+  return `${y}`;
+};
+const digestDueOn = (period, now) => {
+  if (period === 'daily') return true;
+  if (period === 'weekly') return now.getDay() === 1;                     // Mondays
+  if (period === 'monthly') return now.getDate() === 1;                   // 1st
+  if (period === 'quarterly') return now.getDate() === 1 && [0, 3, 6, 9].includes(now.getMonth()); // Jan/Apr/Jul/Oct 1
+  if (period === 'biannual') return now.getDate() === 1 && [0, 6].includes(now.getMonth());        // Jan 1 / Jul 1
+  return now.getDate() === 1 && now.getMonth() === 0;                     // Jan 1 (year-end)
+};
+
+const startDigestScheduler = () => {
+  const tick = () => {
+    try {
+      const now = lagosNow();
+      if (now.getHours() !== 8 && !process.env.DIGEST_TEST) return; // deliver within the 8am hour, Lagos time
+      for (const u of db.prepare('SELECT id FROM users WHERE COALESCE(is_guest,0) = 0').all()) {
+        const uid = u.id;
+        const lastVal = (key) => db.prepare('SELECT value FROM org_settings WHERE user_id = ? AND key = ?').get(uid, key)?.value;
+        const mark = (key, value) => db.prepare('INSERT INTO org_settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value').run(uid, key, value);
+        for (const period of ['daily', 'weekly', 'monthly', 'quarterly', 'biannual', 'year']) {
+          if (!digestDueOn(period, now)) continue;
+          const key = `digest_${period}`;
+          const stamp = digestKey(period, now);
+          if (lastVal(key) === stamp) continue;
+          pushDigest(uid, buildInventoryDigest(uid, period));
+          mark(key, stamp);
+        }
+      }
+    } catch (err) { /* never let the scheduler kill the server */ }
+  };
+  setTimeout(tick, 8e3);
+  setInterval(tick, 10 * 60e3); // every 10 minutes, fires inside the 8am window
+};
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
+
+startDigestScheduler();
 
 const PORT = process.env.PORT || 4200;
 app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {
