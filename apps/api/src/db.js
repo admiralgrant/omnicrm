@@ -321,6 +321,40 @@ const ordCols = db.prepare("PRAGMA table_info(orders)").all().map((c) => c.name)
 if (!ordCols.includes('kind')) db.exec("ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'catalog'");
 if (!ordCols.includes('payment_terms')) db.exec('ALTER TABLE orders ADD COLUMN payment_terms TEXT');
 
+// migration: stock-movement ledger (the source of truth for "sold yesterday", "added today")
+db.exec(`
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  product_id INTEGER NOT NULL,
+  direction TEXT NOT NULL,               -- in | out
+  qty REAL NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'adjustment', -- purchase | sale | adjustment | opening
+  ref_type TEXT,                         -- order | invoice | purchase | null
+  ref_id INTEGER,
+  note TEXT,
+  created_by INTEGER,                    -- staff_id, null = owner/system
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_stockmoves_user ON stock_movements(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_stockmoves_prod ON stock_movements(product_id);
+`);
+// invoice_items gains optional product_id so invoice-paid can deduct stock;
+// invoices gains stock_moved so order-flow deliveries never double-deduct
+const iiCols = db.prepare("PRAGMA table_info(invoice_items)").all().map((c) => c.name);
+if (!iiCols.includes('product_id')) db.exec('ALTER TABLE invoice_items ADD COLUMN product_id INTEGER');
+const invCols2 = db.prepare("PRAGMA table_info(invoices)").all().map((c) => c.name);
+if (!invCols2.includes('stock_moved')) db.exec('ALTER TABLE invoices ADD COLUMN stock_moved INTEGER NOT NULL DEFAULT 0');
+
+// opening-balance movements: each product's current stock becomes a dated 'opening' in
+for (const p of db.prepare('SELECT id, user_id, stock FROM products').all()) {
+  const has = db.prepare('SELECT id FROM stock_movements WHERE product_id = ? LIMIT 1').get(p.id);
+  if (!has && Number(p.stock) > 0) {
+    db.prepare("INSERT INTO stock_movements (user_id, product_id, direction, qty, reason, note) VALUES (?, ?, 'in', ?, 'opening', 'Opening balance')")
+      .run(p.user_id, p.id, Number(p.stock));
+  }
+}
+
 // migration: dedupe DM conversations (member order must be canonical — sorted ids)
 const convCols = db.prepare("PRAGMA table_info(conversations)").all().map((c) => c.name);
 if (!convCols.includes('dept')) db.exec('ALTER TABLE conversations ADD COLUMN dept TEXT');
