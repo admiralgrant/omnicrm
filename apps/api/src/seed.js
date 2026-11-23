@@ -8,11 +8,23 @@ const password = 'omnicrm-demo';
 
 let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
 if (!user) {
-  db.prepare('INSERT INTO users (email, name, password_hash, business_name) VALUES (?, ?, ?, ?)')
+  db.prepare('INSERT INTO users (email, name, password_hash, business_name, is_platform) VALUES (?, ?, ?, ?, 1)')
     .run(email, 'Grant Ojijieme', bcrypt.hashSync(password, 10), 'Bescon Paints');
   user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
 }
 const uid = user.id;
+
+// platform (super admin) account + three tenant org admins
+const platformAccounts = [
+  ['Super Admin', 'superadmin@omnicrm.com', 'omnicrm-superadmin', 'OmniCRM Platform', 1, 1],
+  ['Zoria Admin', 'zoria@omnicrm.com', 'zoria-demo', 'Zoria Access Limited', 0, 0],
+  ['Bescon Global Admin', 'besconglobal@omnicrm.com', 'bescon-demo', 'Bescon Global Development Limited', 0, 0],
+  ['Jacoco Admin', 'jacoco@omnicrm.com', 'jacoco-demo', 'Jacoco Beverage', 0, 0],
+];
+for (const [name, em, pw, biz, is_platform, platform_only] of platformAccounts) {
+  db.prepare('INSERT INTO users (name, email, password_hash, business_name, is_platform, platform_only) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
+    .run(name, em, bcrypt.hashSync(pw, 10), biz, is_platform, platform_only);
+}
 
 const seedContacts = [
   { name: 'Procurement', company: 'Zoria Access Limited', phone: '08010000001', email: 'procurement@zoriaaccess.demo', tags: 'lead,vip', status: 'proposal_sent', deal_value_ngn: 2400000, next_action: 'Follow up on proposal', next_followup_date: '2026-11-20' },
