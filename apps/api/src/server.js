@@ -76,7 +76,7 @@ app.post('/auth/login', async (req, reply) => {
     const token = jwt.sign({ id: staff.user_id, email: staff.email, dept: staff.department, staff_id: staff.id, name: staff.name }, JWT_SECRET, { expiresIn: '7d' });
     return { token, user: { id: staff.user_id, email: staff.email, name: staff.name, dept: staff.department, staff: true, business_name: null } };
   }
-  const token = jwt.sign({ id: user.id, email: user.email, name: user.name, guest: !!user.is_guest }, JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign({ id: user.id, email: user.email, name: user.name, guest: !!user.is_guest, platform: !!user.is_platform }, JWT_SECRET, { expiresIn: '7d' });
   return { token, user: { id: user.id, email: user.email, name: user.name, business_name: user.business_name, guest: !!user.is_guest } };
 });
 
@@ -287,24 +287,78 @@ app.post('/messages/:id/read', { preHandler: requireAuth }, async (req, reply) =
   return { ok: true };
 });
 
-// AI draft: next best message for a contact from its state
+// ---- LLM brain: optional provider key upgrades the rule-based AI; no key = deterministic fallback ----
+const LLM_KEY = process.env.LLM_API_KEY || '';
+const LLM_URL = process.env.LLM_API_URL || 'https://api.deepseek.com/chat/completions';
+const LLM_MODEL = process.env.LLM_MODEL || 'deepseek-chat';
+const LLM_DAILY_CAP = 100; // per org per day
+async function askLLM(system, prompt) {
+  if (!LLM_KEY) return null;
+  try {
+    const r = await fetch(LLM_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + LLM_KEY },
+      body: JSON.stringify({ model: LLM_MODEL, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], temperature: 0.6, max_tokens: 600 }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j.choices?.[0]?.message?.content || '').trim() || null;
+  } catch { return null; }
+}
+const aiBudgetOk = (userId) => {
+  if (!LLM_KEY) return false;
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `ai_calls_${day}`;
+  const row = db.prepare('SELECT value FROM org_settings WHERE user_id = ? AND key = ?').get(userId, key);
+  const used = row ? Number(row.value) || 0 : 0;
+  return used < LLM_DAILY_CAP;
+};
+const aiSpend = (userId) => {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `ai_calls_${day}`;
+  db.prepare("INSERT INTO org_settings (user_id, key, value) VALUES (?, ?, '1') ON CONFLICT(user_id, key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)")
+    .run(userId, key);
+};
+const aiAuditLog = (userId, kind, contactId, body, source) => {
+  db.prepare('INSERT INTO ai_audit (user_id, kind, contact_id, body, source) VALUES (?, ?, ?, ?, ?)')
+    .run(userId, kind, contactId || null, String(body || '').slice(0, 500), source);
+};
+
+// AI draft: next best message for a contact from its state (LLM when key present, rules otherwise)
 app.get('/ai/draft', { preHandler: requireAuth }, async (req, reply) => {
   const { contact_id } = req.query || {};
   if (!contact_id) return reply.code(400).send({ error: 'contact_id is required' });
   const c = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!c) return reply.code(404).send({ error: 'Contact not found' });
-  let draft;
+  let draft, source = 'rules';
   const first = c.company ? c.company.split(' ')[0] : c.name;
-  if (c.debt_ngn > 0) {
-    draft = `Hello ${first}, this is a gentle reminder from your records: a balance of ₦${Number(c.debt_ngn).toLocaleString()} is still outstanding. Kindly confirm when payment can be made. Thank you!`;
-  } else if (c.status === 'proposal_sent') {
-    draft = `Hi ${first}, just following up on the proposal I sent. Happy to walk you through the tier that suits your needs — 15 minutes is all I would need. Would this week work for a call?`;
-  } else if (c.status === 'won') {
-    draft = `Hello ${first}, thank you for partnering with us! Your order is confirmed — delivery details are on the way.`;
-  } else {
-    draft = `Hello ${first}, hope business is going well. Just checking in — is there anything we can support you with this week?`;
+  if (aiBudgetOk(req.user.id)) {
+    const sys = 'You are a polite Nigerian B2B sales assistant drafting WhatsApp follow-ups. Keep it short, warm, professional, no emojis, no em dashes. Never invent prices, dates or facts not given.';
+    const prompt = `Contact: ${c.company || c.name} (status: ${c.status}). Outstanding debt: ₦${Number(c.debt_ngn || 0).toLocaleString()}. Deal value: ₦${Number(c.deal_value_ngn || 0).toLocaleString()}. Next action: ${c.next_action || 'none'}. Write the next best follow-up message.`;
+    const llm = await askLLM(sys, prompt);
+    if (llm) { draft = llm; source = 'llm'; aiSpend(req.user.id); }
   }
-  return { contact_id: c.id, draft };
+  if (!draft) {
+    if (c.debt_ngn > 0) {
+      draft = `Hello ${first}, this is a gentle reminder from your records: a balance of ₦${Number(c.debt_ngn).toLocaleString()} is still outstanding. Kindly confirm when payment can be made. Thank you!`;
+    } else if (c.status === 'proposal_sent') {
+      draft = `Hi ${first}, just following up on the proposal I sent. Happy to walk you through the tier that suits your needs, 15 minutes is all I would need. Would this week work for a call?`;
+    } else if (c.status === 'won') {
+      draft = `Hello ${first}, thank you for partnering with us! Your order is confirmed, delivery details are on the way.`;
+    } else {
+      draft = `Hello ${first}, hope business is going well. Just checking in, is there anything we can support you with this week?`;
+    }
+  }
+  aiAuditLog(req.user.id, 'draft', c.id, draft, source);
+  return { contact_id: c.id, draft, source };
+});
+
+app.get('/ai/audit', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept) return reply.code(403).send({ error: 'Owner only' });
+  const rows = db.prepare(`SELECT a.*, c.company, c.name AS contact_name FROM ai_audit a LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE a.user_id = ? ORDER BY a.id DESC LIMIT 60`).all(req.user.id);
+  return { rows };
 });
 
 app.get('/products', { preHandler: requireAuth }, async (req) => {
@@ -501,6 +555,29 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   return { invoice: inv };
 });
 
+// ---- email: SMTP auto-send (configured via env; silently falls back to manual mailto) ----
+const SMTP_HOST = process.env.SMTP_HOST || '';
+let nodemailerMod = null;
+async function sendEmail(to, subject, text) {
+  if (!SMTP_HOST) return { sent: false, reason: 'smtp-not-configured' };
+  try {
+    if (!nodemailerMod) nodemailerMod = (await import('nodemailer')).default || (await import('nodemailer'));
+    const transporter = nodemailerMod.createTransport({
+      host: SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: process.env.SMTP_SECURE === '1',
+      auth: { user: process.env.SMTP_USER || '', pass: process.env.SMTP_PASS || '' },
+    });
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@omnicrm.ng',
+      to, subject, text,
+    });
+    return { sent: true };
+  } catch (e) {
+    return { sent: false, reason: String(e.message).slice(0, 200) };
+  }
+}
+
 app.post('/invoices/:id/send', { preHandler: requireAuth }, async (req, reply) => {
   if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
     return reply.code(403).send({ error: 'Only admin or accounts can send invoices.' });
@@ -511,7 +588,14 @@ app.post('/invoices/:id/send', { preHandler: requireAuth }, async (req, reply) =
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
     .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (₦${Number(inv.total).toLocaleString()}) sent to customer`);
   db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(inv.contact_id, req.user.id);
-  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id), pay_link: `/pay.html?token=${inv.pay_token}` };
+  // auto-email the invoice when SMTP is configured
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(inv.contact_id);
+  const biz = db.prepare('SELECT business_name FROM users WHERE id = ?').get(req.user.id);
+  const payLink = `${req.protocol}://${req.headers.host}/pay.html?token=${inv.pay_token}`;
+  const email = contact?.email ? await sendEmail(contact.email,
+    `Invoice ${inv.number} from ${biz?.business_name || 'OmniCRM'}`,
+    `Dear ${contact.name || 'Customer'},\n\nPlease find your invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()}) from ${biz?.business_name || 'us'}.\n\nPay online: ${payLink}\n\nThank you for your business.`) : { sent: false, reason: 'no-contact-email' };
+  return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id), pay_link: `/pay.html?token=${inv.pay_token}`, email };
 });
 
 app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) => {
@@ -532,6 +616,7 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
     db.prepare('UPDATE invoices SET stock_moved = 1 WHERE id = ?').run(inv.id);
   }
   db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
+  walletMove(inv.user_id, 'in', inv.ngn_total || inv.total, 'payment', 'invoice', inv.id, `Invoice ${inv.number} payment`, req.user.staff_id, 'completed');
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
     .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()} ≈ ₦${Number(inv.ngn_total || inv.total).toLocaleString()}) paid ✅`);
   db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.ngn_total || inv.total, inv.contact_id, req.user.id);
@@ -744,7 +829,7 @@ app.get('/ai/report', { preHandler: requireAuth }, async (req, reply) => {
   const since = new Date(Date.now() - days * 864e5).toISOString();
   const uid = req.user.id;
   const q = (sql, ...p) => db.prepare(sql).all(...p);
-  const scopes = scope ? [scope] : ['sales', 'support', 'inventory', 'account'];
+  const scopes = scope ? [scope] : ['sales', 'support', 'account'];
   const sections = [];
   for (const s of scopes) {
     if (s === 'sales') {
@@ -1350,6 +1435,28 @@ app.get('/chat/conversations', { preHandler: requireAuth }, async (req) => {
   return { conversations: myChats(req.user.id, req.user.staff_id, req.user.dept), staff: contacts };
 });
 
+// lightweight real-time: last message id per visible conversation (for unread badges + polling)
+app.get('/chat/unread', { preHandler: requireAuth }, async (req) => {
+  const convos = myChats(req.user.id, req.user.staff_id, req.user.dept);
+  const me = req.user.staff_id || 0;
+  let wm = {};
+  try { wm = JSON.parse(req.query.watermarks || '{}') || {}; } catch { wm = {}; }
+  const rows = convos.map((c) => {
+    const mark = Number(wm[c.id]) || 0;
+    const unseen = db.prepare('SELECT COUNT(*) AS c FROM conversation_messages WHERE conversation_id = ? AND id > ? AND COALESCE(sender_staff_id, 0) != ?')
+      .get(c.id, mark, me).c;
+    return {
+      conversation_id: c.id,
+      last_message_id: c.last ? c.last.id : 0,
+      last_body: c.last ? String(c.last.body || '').slice(0, 60) : null,
+      last_sender: c.last ? c.last.sender_staff_id : null,
+      last_at: c.last ? c.last.created_at : null,
+      unseen,
+    };
+  });
+  return { rows };
+});
+
 app.get('/chat/conversations/:id', { preHandler: requireAuth }, async (req, reply) => {
   const c = db.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!c) return reply.code(404).send({ error: 'Conversation not found' });
@@ -1631,13 +1738,18 @@ app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) 
   if (o.status !== 'pending') return reply.code(400).send({ error: `Order is already ${o.status}` });
   const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
   const items = JSON.parse(o.items_json);
+  // pricing authority: ops may set the final price at approval (custom orders + discount adjustments)
+  const finalTotal = Number(req.body?.final_total_ngn) > 0 ? Number(req.body?.final_total_ngn) : o.total_ngn;
+  if (finalTotal !== o.total_ngn) {
+    db.prepare('UPDATE orders SET total_ngn = ? WHERE id = ?').run(finalTotal, o.id);
+  }
   // auto-raise the invoice (draft -> visible to the rep when delivered)
   const n = db.prepare('SELECT COUNT(*) AS c FROM invoices WHERE user_id = ?').get(req.user.id).c;
   const number = `INV-2026-${String(n + 1).padStart(3, '0')}`;
   const due = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
   const inv = db.prepare(`INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, total, tax_rate, tax, currency, fx_rate, ngn_total)
     VALUES (?, ?, ?, 'draft', date('now'), ?, ?, ?, 7.5, ?, 'NGN', 1, ?)`)
-    .run(req.user.id, o.contact_id, number, due, o.total_ngn, o.total_ngn * 1.075, o.total_ngn * 0.075, o.total_ngn);
+    .run(req.user.id, o.contact_id, number, due, finalTotal, finalTotal * 1.075, finalTotal * 0.075, finalTotal);
   for (const it of items) {
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
       .run(inv.lastInsertRowid, it.name, it.qty, it.price, (Number(it.price) || 0) * (Number(it.qty) || 0), it.product_id || null);
@@ -1691,10 +1803,20 @@ app.post('/orders/:id/payment', { preHandler: requireAuth }, async (req, reply) 
   const { ref } = req.body || {};
   db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(ref || null, o.id);
   if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ?").run(o.invoice_id);
+  walletMove(o.user_id, 'in', o.total_ngn, 'payment', 'order', o.id, `Order #${o.id} payment${ref ? ' ' + ref : ''}`, req.user.staff_id, 'completed');
   notify(o.user_id, o.staff_id, 'payment_received',
-    `Payment received for order #${o.id} (${o.total_ngn.toLocaleString()} naira)${ref ? ' — ref ' + ref : ''}.`,
+    `Payment received for order #${o.id} (${o.total_ngn.toLocaleString()} naira)${ref ? ' ref ' + ref : ''}.`,
     { view: 'orders', id: o.id });
   return { ok: true };
+});
+
+app.get('/inventory-updates', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`SELECT * FROM notifications
+    WHERE kind = 'inventory_digest' AND (staff_id = ? OR (staff_id IS NULL AND user_id = ?))
+    ORDER BY id DESC LIMIT 20`)
+    .all(req.user.staff_id || null, req.user.id)
+    .map((n) => ({ ...n, link: n.link_json ? JSON.parse(n.link_json) : null }));
+  return { rows };
 });
 
 app.get('/notifications', { preHandler: requireAuth }, async (req) => {
@@ -1769,20 +1891,20 @@ app.get('/ai/inventory-digest', { preHandler: requireAuth }, async (req) => {
   return { digest: buildInventoryDigest(req.user.id, period) };
 });
 
-// push a digest to its audiences: inventory, sales, support staff + owner/CEO (staff_id NULL)
+// push a digest to its audiences: EVERYONE sees the same company-wide inventory updates
 const pushDigest = (uid, d) => {
   const headline = d.period === 'daily'
-    ? `📦 Inventory today: +${d.added} in · −${d.sold} out`
-    : `📦 ${d.label} inventory: +${d.added} in · −${d.sold} out`;
+    ? `Inventory today: +${d.added} in · −${d.sold} out`
+    : `${d.label} inventory: +${d.added} in · −${d.sold} out`;
   const bits = [headline];
-  if (d.low_count) bits.push(`⚠️ ${d.low_count} low-stock: ${d.low_items.map((i) => `${i.product} (${i.stock})`).join(', ')}`);
-  if (d.negatives.length) bits.push(`❌ Negative stock: ${d.negatives.join(', ')}`);
+  if (d.low_count) bits.push(`${d.low_count} low-stock: ${d.low_items.map((i) => `${i.product} (${i.stock})`).join(', ')}`);
+  if (d.negatives.length) bits.push(`Negative stock: ${d.negatives.join(', ')}`);
   bits.push(`Stock value ₦${Number(d.stock_value).toLocaleString()}`);
   const message = bits.join(' · ');
-  const staffs = db.prepare('SELECT id, department FROM staff WHERE user_id = ?').all(uid);
-  const targets = staffs.filter((s) => ['inventory', 'sales', 'support'].includes(s.department));
-  for (const s of targets) notify(uid, s.id, 'inventory_digest', message, { view: s.department === 'inventory' ? 'inventory' : 'dashboard' });
-  notify(uid, null, 'inventory_digest', message, { view: 'inventory' }); // owner / CEO
+  const link = { view: 'inventory', period: d.period };
+  const staffs = db.prepare('SELECT id FROM staff WHERE user_id = ?').all(uid);
+  for (const s of staffs) notify(uid, s.id, 'inventory_digest', message, link);
+  notify(uid, null, 'inventory_digest', message, link); // owner / CEO
 };
 
 // in-app scheduler: every tick, if it's the 08:00–08:59 Lagos window, fire due digests per org
@@ -1829,8 +1951,112 @@ const startDigestScheduler = () => {
   setInterval(tick, 10 * 60e3); // every 10 minutes, fires inside the 8am window
 };
 
+// ---- wallet: the org's in-app money, with an in/out ledger ----
+const ensureWallet = (userId) => {
+  db.prepare('INSERT OR IGNORE INTO wallets (user_id, balance_ngn) VALUES (?, 0)').run(userId);
+  return db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId);
+};
+const walletMove = (userId, direction, amount, kind, refType, refId, note, createdBy, status) => {
+  ensureWallet(userId);
+  const delta = direction === 'in' ? amount : -amount;
+  db.prepare('UPDATE wallets SET balance_ngn = balance_ngn + ? WHERE user_id = ?').run(delta, userId);
+  const info = db.prepare(`INSERT INTO wallet_transactions (user_id, direction, amount_ngn, kind, ref_type, ref_id, note, created_by, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, direction, amount, kind, refType || null, refId || null, note || null, createdBy || null, status || null);
+  return { id: info.lastInsertRowid, balance: db.prepare('SELECT balance_ngn FROM wallets WHERE user_id = ?').get(userId).balance_ngn };
+};
+
+app.get('/wallet', { preHandler: requireAuth }, async (req) => {
+  const w = ensureWallet(req.user.id);
+  const txs = db.prepare(`SELECT t.*, s.name AS by_name FROM wallet_transactions t LEFT JOIN staff s ON s.id = t.created_by
+    WHERE t.user_id = ? ORDER BY t.id DESC LIMIT 50`).all(req.user.id);
+  return { wallet: w, transactions: txs, demo: !paystackEnabled() };
+});
+
+app.post('/wallet/topup', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin or accounts can top up the wallet' });
+  const { amount_ngn, note } = req.body || {};
+  const n = Number(amount_ngn);
+  if (!(n > 0)) return reply.code(400).send({ error: 'amount_ngn must be a positive number' });
+  const r = walletMove(req.user.id, 'in', n, 'topup', null, null, note || 'Manual top-up', req.user.staff_id, 'completed');
+  notify(req.user.id, null, 'wallet', `Wallet topped up ₦${n.toLocaleString()}. Balance ₦${r.balance.toLocaleString()}.`, { view: 'wallet' });
+  return r;
+});
+
+app.post('/wallet/payout', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin or accounts can move money out' });
+  const { amount_ngn, destination, note } = req.body || {};
+  const n = Number(amount_ngn);
+  if (!(n > 0)) return reply.code(400).send({ error: 'amount_ngn must be a positive number' });
+  const w = ensureWallet(req.user.id);
+  if (w.balance_ngn < n) return reply.code(400).send({ error: `Insufficient wallet balance (₦${Number(w.balance_ngn).toLocaleString()})` });
+  const status = paystackEnabled() ? 'requested' : 'completed';
+  const r = walletMove(req.user.id, 'out', n, 'payout', null, null,
+    `${destination ? destination + ' ' : ''}${note || 'Payout'}${paystackEnabled() ? '' : ' (demo mode)'}`, req.user.staff_id, status);
+  notify(req.user.id, null, 'wallet',
+    `Payout ₦${n.toLocaleString()} ${status === 'completed' ? 'processed' : 'requested'}${destination ? ' to ' + destination : ''}. Balance ₦${r.balance.toLocaleString()}.`,
+    { view: 'wallet' });
+  return r;
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
+
+// ---- platform (super-admin) console: the vendor above all orgs ----
+const platformOnly = (req, reply, done) => (req.user.platform ? done() : reply.code(403).send({ error: 'Platform admins only' }));
+const audit = (adminId, action, targetId, detail) => {
+  db.prepare('INSERT INTO platform_audit (admin_id, action, target_id, detail) VALUES (?, ?, ?, ?)')
+    .run(adminId, action, targetId || null, detail || null);
+};
+
+app.get('/platform/orgs', { preHandler: [requireAuth, platformOnly] }, async (req) => {
+  const orgs = db.prepare('SELECT id, email, name, business_name, is_guest, created_at FROM users ORDER BY id').all()
+    .map((o) => ({
+      ...o,
+      staff: db.prepare('SELECT COUNT(*) AS c FROM staff WHERE user_id = ?').get(o.id).c,
+      contacts: db.prepare('SELECT COUNT(*) AS c FROM contacts WHERE user_id = ?').get(o.id).c,
+      invoices: db.prepare('SELECT COUNT(*) AS c FROM invoices WHERE user_id = ?').get(o.id).c,
+      features: orgFeatures(o.id),
+    }));
+  return { orgs };
+});
+
+app.post('/platform/impersonate', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
+  const { user_id } = req.body || {};
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
+  if (!u) return reply.code(404).send({ error: 'Organization not found' });
+  audit(req.user.id, 'impersonate', u.id, `Signed in as ${u.business_name || u.email}`);
+  const token = jwt.sign({ id: u.id, email: u.email, name: u.name, guest: !!u.is_guest, imp_by: req.user.id }, JWT_SECRET, { expiresIn: '2h' });
+  return { token };
+});
+
+app.post('/platform/orgs/:id/password', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!u) return reply.code(404).send({ error: 'Organization not found' });
+  const { new_password } = req.body || {};
+  if (!new_password || String(new_password).length < 8) return reply.code(400).send({ error: 'new_password must be at least 8 characters' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(String(new_password), 10), u.id);
+  audit(req.user.id, 'reset_password', u.id, `Password reset for ${u.business_name || u.email}`);
+  return { ok: true };
+});
+
+app.put('/platform/orgs/:id/features', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
+  const u = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  if (!u) return reply.code(404).send({ error: 'Organization not found' });
+  const features = req.body?.features;
+  if (!features || typeof features !== 'object') return reply.code(400).send({ error: 'features object is required' });
+  db.prepare("INSERT INTO org_settings (user_id, key, value) VALUES (?, 'features', ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value")
+    .run(u.id, JSON.stringify(features));
+  audit(req.user.id, 'update_features', u.id, JSON.stringify(features));
+  return { features };
+});
+
+app.get('/platform/audit', { preHandler: [requireAuth, platformOnly] }, async (req) => {
+  const rows = db.prepare(`SELECT a.*, u.email AS admin_email FROM platform_audit a JOIN users u ON u.id = a.admin_id
+    ORDER BY a.id DESC LIMIT 50`).all();
+  return { rows };
+});
 
 startDigestScheduler();
 
