@@ -76,8 +76,8 @@ app.post('/auth/login', async (req, reply) => {
     const token = jwt.sign({ id: staff.user_id, email: staff.email, dept: staff.department, staff_id: staff.id, name: staff.name }, JWT_SECRET, { expiresIn: '7d' });
     return { token, user: { id: staff.user_id, email: staff.email, name: staff.name, dept: staff.department, staff: true, business_name: null } };
   }
-  const token = jwt.sign({ id: user.id, email: user.email, name: user.name, guest: !!user.is_guest, platform: !!user.is_platform }, JWT_SECRET, { expiresIn: '7d' });
-  return { token, user: { id: user.id, email: user.email, name: user.name, business_name: user.business_name, guest: !!user.is_guest } };
+  const token = jwt.sign({ id: user.id, email: user.email, name: user.name, guest: !!user.is_guest, platform: !!user.is_platform, platform_only: !!user.platform_only }, JWT_SECRET, { expiresIn: '7d' });
+  return { token, user: { id: user.id, email: user.email, name: user.name, business_name: user.business_name, guest: !!user.is_guest, platform: !!user.is_platform, platform_only: !!user.platform_only } };
 });
 
 // ---- read-only guard for guest sessions: browse anything, mutate nothing ----
@@ -2034,8 +2034,22 @@ const audit = (adminId, action, targetId, detail) => {
     .run(adminId, action, targetId || null, detail || null);
 };
 
+app.get('/platform/summary', { preHandler: [requireAuth, platformOnly] }, async (req) => {
+  const count = (sql) => db.prepare(sql).get().c;
+  const sum = (sql) => db.prepare(sql).get().v || 0;
+  return {
+    orgs: count('SELECT COUNT(*) c FROM users WHERE COALESCE(platform_only,0) = 0 AND COALESCE(is_guest,0) = 0'),
+    guests: count('SELECT COUNT(*) c FROM users WHERE COALESCE(is_guest,0) = 1'),
+    staff: count('SELECT COUNT(*) c FROM staff'),
+    contacts: count('SELECT COUNT(*) c FROM contacts'),
+    invoices_paid_value: sum('SELECT COALESCE(SUM(ngn_total),0) v FROM invoices WHERE status = \'paid\''),
+    wallet_balances: sum('SELECT COALESCE(SUM(balance_ngn),0) v FROM wallets'),
+    ai_calls_today: count("SELECT COUNT(*) c FROM ai_audit WHERE created_at >= date('now')"),
+  };
+});
+
 app.get('/platform/orgs', { preHandler: [requireAuth, platformOnly] }, async (req) => {
-  const orgs = db.prepare('SELECT id, email, name, business_name, is_guest, created_at FROM users ORDER BY id').all()
+  const orgs = db.prepare('SELECT id, email, name, business_name, is_guest, created_at FROM users WHERE COALESCE(platform_only,0) = 0 AND COALESCE(is_guest,0) = 0 ORDER BY id').all()
     .map((o) => ({
       ...o,
       staff: db.prepare('SELECT COUNT(*) AS c FROM staff WHERE user_id = ?').get(o.id).c,
