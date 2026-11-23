@@ -261,6 +261,12 @@ export default function App() {
     hr: ['dashboard', 'hr', 'mail', 'reports'],
     account: ['dashboard', 'invoices', 'orders', 'mail', 'reports', 'wallet'],
   };
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
   const allowed = (section) => {
     if (section === 'portal') return !!(me?.staff_id || me?.staff);
     if (orgFeats && orgFeats[section] === false) return false;
@@ -652,7 +658,7 @@ export default function App() {
         </div>
         {view === 'dashboard' && dash && (
           <>
-            <h1>Good morning{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
+            <h1>{greeting()}{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
             <div className="dept-pills">
               {depts.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}><Icon name={icon} size={15} /> {label}</button>
