@@ -3,6 +3,7 @@ import Icon from './Icon.jsx';
 
 const API = '/api';
 const tokenKey = 'omnicrm_token';
+const FEATURE_KEYS = ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat', 'wallet'];
 // A demo-link tab must always boot clean: never carry an old session into guest mode.
 if (typeof window !== 'undefined' && sessionStorage.getItem('omnicrm_demo') && localStorage.getItem(tokenKey)) {
   localStorage.removeItem(tokenKey);
@@ -2440,6 +2441,7 @@ function SuperAdminApp() {
   const [demoLinks, setDemoLinks] = useState([]);
   const [demoOrg, setDemoOrg] = useState('');
   const [demoLabel, setDemoLabel] = useState('');
+  const [featureOrg, setFeatureOrg] = useState(null); // org id with the feature panel open
   const [loaded, setLoaded] = useState(false);
   const load = async () => {
     try {
@@ -2478,33 +2480,72 @@ function SuperAdminApp() {
             <div className="card">
               <h3><Icon name="building" size={15} /> Organizations</h3>
               {orgs.filter((o) => !o.is_guest).map((o) => (
-                <div key={o.id} className="inv-row" style={{ gridTemplateColumns: '1fr auto' }}>
-                  <div className="thread-info" style={{ paddingLeft: 8 }}>
-                    <b>{o.business_name || o.email}</b>
-                    <span>{o.email} · {o.staff} staff · {o.contacts} contacts · {o.invoices} invoices · joined {String(o.created_at || '').slice(0, 10)}</span>
+                <div key={o.id}>
+                  <div className="inv-row" style={{ gridTemplateColumns: '1fr auto' }}>
+                    <div className="thread-info" style={{ paddingLeft: 8 }}>
+                      <b>{o.business_name || o.email}</b>
+                      <span>{o.email} · {o.staff} staff · {o.contacts} contacts · {o.invoices} invoices · joined {String(o.created_at || '').slice(0, 10)}</span>
+                    </div>
+                    <div className="inv-right" style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                      <button className="btn-ghost sm" onClick={() => setFeatureOrg(featureOrg === o.id ? null : o.id)}>
+                        <Icon name="settings" size={13} /> {featureOrg === o.id ? 'Close features' : 'Manage features'}
+                      </button>
+                      <button className="btn-ghost sm" onClick={async () => {
+                        if (!window.confirm(`Sign in as ${o.business_name || o.email}? Your session switches to their account (2h). Audit logged.`)) return;
+                        const r = await api('/platform/impersonate', { method: 'POST', body: JSON.stringify({ user_id: o.id }) });
+                        localStorage.setItem(tokenKey, r.token);
+                        location.reload();
+                      }}><Icon name="right" size={13} /> Enter org</button>
+                      <button className="btn-ghost sm" onClick={async () => {
+                        const np = window.prompt(`New password for ${o.business_name || o.email} (min 8 chars):`);
+                        if (!np) return;
+                        await api(`/platform/orgs/${o.id}/password`, { method: 'POST', body: JSON.stringify({ new_password: np }) });
+                        alert('Password reset and audit-logged.');
+                      }}>Reset password</button>
+                    </div>
                   </div>
-                  <div className="inv-right" style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-                    <button className="btn-ghost sm" onClick={async () => {
-                      if (!window.confirm(`Sign in as ${o.business_name || o.email}? Your session switches to their account (2h). Audit logged.`)) return;
-                      const r = await api('/platform/impersonate', { method: 'POST', body: JSON.stringify({ user_id: o.id }) });
-                      localStorage.setItem(tokenKey, r.token);
-                      location.reload();
-                    }}><Icon name="right" size={13} /> Enter org</button>
-                    <button className="btn-ghost sm" onClick={async () => {
-                      const np = window.prompt(`New password for ${o.business_name || o.email} (min 8 chars):`);
-                      if (!np) return;
-                      await api(`/platform/orgs/${o.id}/password`, { method: 'POST', body: JSON.stringify({ new_password: np }) });
-                      alert('Password reset and audit-logged.');
-                    }}>Reset password</button>
-                    <button className="btn-ghost sm" onClick={async () => {
-                      const feats = o.features || {};
-                      const all = !Object.values(feats).some((v) => v === false);
-                      const next = {};
-                      for (const k of ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat']) next[k] = !all;
-                      await api(`/platform/orgs/${o.id}/features`, { method: 'PUT', body: JSON.stringify({ features: { ...feats, ...next } }) });
-                      await load();
-                    }}>{Object.values(o.features || {}).some((v) => v === false) ? 'Enable all features' : 'Disable all features'}</button>
-                  </div>
+                  {featureOrg === o.id && (
+                    <div className="feat-panel">
+                      <div className="feat-panel-head">
+                        <b>Features for {o.business_name || o.email}</b>
+                        <span className="quick-actions" style={{ marginTop: 0 }}>
+                          <button className="btn-ghost sm" onClick={async () => {
+                            const next = {};
+                            for (const k of FEATURE_KEYS) next[k] = true;
+                            await api(`/platform/orgs/${o.id}/features`, { method: 'PUT', body: JSON.stringify({ features: next }) });
+                            await load();
+                          }}>Enable all</button>
+                          <button className="btn-ghost sm" onClick={async () => {
+                            const next = {};
+                            for (const k of FEATURE_KEYS) next[k] = false;
+                            await api(`/platform/orgs/${o.id}/features`, { method: 'PUT', body: JSON.stringify({ features: next }) });
+                            await load();
+                          }}>Disable all</button>
+                        </span>
+                      </div>
+                      {FEATURE_KEYS.map((k) => {
+                        const cur = o.features || {};
+                        const on = cur[k] !== false;
+                        return (
+                          <div key={k} className="feat-toggle">
+                            <span>{k === 'inbox' ? 'WhatsApp Inbox' : k.replace(/_/g, ' ')}</span>
+                            <label className="switch">
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={async (e) => {
+                                  const next = { ...cur, [k]: !on };
+                                  await api(`/platform/orgs/${o.id}/features`, { method: 'PUT', body: JSON.stringify({ features: next }) });
+                                  await load();
+                                }}
+                              />
+                              <span className="slider" />
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
