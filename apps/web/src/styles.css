@@ -338,3 +338,9 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
   .feat:hover, .price-card:hover { transform: translateY(-3px); box-shadow: 0 16px 36px -14px rgba(10, 20, 15, 0.28); border-color: var(--accent); }
   .icon-btn:active, .pill:active { transform: scale(0.96); }
 }
+/* ---- platform (super admin) console ---- */
+.platform-shell { min-height: 100vh; background: var(--bg); color: var(--ink); }
+.platform-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 5%; border-bottom: 1px solid var(--line); background: var(--surface); position: sticky; top: 0; z-index: 50; }
+.platform-top .logo { padding-bottom: 0; }
+.platform-main { max-width: 1000px; margin: 0 auto; padding: 28px 5% 60px; }
+.platform-main h1 { font-size: 24px; letter-spacing: -0.4px; margin-bottom: 8px; }
