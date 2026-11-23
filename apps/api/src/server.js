@@ -1343,12 +1343,14 @@ app.get('/demo/:token', async (req, reply) => {
   return { ok: true, label: row.label };
 });
 
-app.get('/demo-links', { preHandler: requireAuth }, async (req) => {
+app.get('/demo-links', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.platform_only) return reply.code(403).send({ error: 'Demo links are managed from the Platform Console' });
   const rows = db.prepare('SELECT * FROM demo_links WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
   return { links: rows };
 });
 
 app.post('/demo-links', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.platform_only) return reply.code(403).send({ error: 'Demo links are managed from the Platform Console' });
   const { label } = req.body || {};
   const token = `${randomUUID().slice(0, 8)}-${randomUUID().slice(0, 8)}`;
   const info = db.prepare('INSERT INTO demo_links (user_id, token, label) VALUES (?, ?, ?)').run(req.user.id, token, label || null);
@@ -1356,6 +1358,7 @@ app.post('/demo-links', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 app.delete('/demo-links/:id', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.platform_only) return reply.code(403).send({ error: 'Demo links are managed from the Platform Console' });
   const existing = db.prepare('SELECT * FROM demo_links WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return reply.code(404).send({ error: 'Link not found' });
   db.prepare("UPDATE demo_links SET active = 0, revoked_at = datetime('now') WHERE id = ?").run(req.params.id);
@@ -2094,6 +2097,41 @@ app.get('/platform/audit', { preHandler: [requireAuth, platformOnly] }, async (r
   const rows = db.prepare(`SELECT a.*, u.email AS admin_email FROM platform_audit a JOIN users u ON u.id = a.admin_id
     ORDER BY a.id DESC LIMIT 50`).all();
   return { rows };
+});
+
+// ---- demo links live in the platform console; orgs cannot create them ----
+app.get('/platform/demo-links', { preHandler: [requireAuth, platformOnly] }, async (req) => {
+  const rows = db.prepare(`SELECT d.*, u.email, u.business_name FROM demo_links d JOIN users u ON u.id = d.user_id ORDER BY d.id DESC`).all();
+  return { links: rows };
+});
+
+app.post('/platform/demo-links', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
+  const { user_id, label } = req.body || {};
+  const u = db.prepare('SELECT id, email FROM users WHERE id = ? AND COALESCE(platform_only,0) = 0 AND COALESCE(is_guest,0) = 0').get(user_id);
+  if (!u) return reply.code(404).send({ error: 'Organization not found' });
+  const token = `${randomUUID().slice(0, 8)}-${randomUUID().slice(0, 8)}`;
+  const info = db.prepare('INSERT INTO demo_links (user_id, token, label) VALUES (?, ?, ?)').run(u.id, token, label || null);
+  audit(req.user.id, 'create_demo_link', u.id, label || `demo link for ${u.email}`);
+  return { link: db.prepare('SELECT * FROM demo_links WHERE id = ?').get(info.lastInsertRowid), url: `/demo.html?token=${token}` };
+});
+
+app.post('/platform/demo-links/:id/revoke', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM demo_links WHERE id = ?').get(req.params.id);
+  if (!existing) return reply.code(404).send({ error: 'Link not found' });
+  db.prepare("UPDATE demo_links SET active = 0, revoked_at = datetime('now') WHERE id = ?").run(req.params.id);
+  audit(req.user.id, 'revoke_demo_link', existing.user_id, existing.label || existing.token);
+  return { ok: true };
+});
+
+// ---- super admin returns from an impersonated org session back to the platform ----
+app.post('/platform/exit', { preHandler: requireAuth }, async (req, reply) => {
+  const impBy = req.user.imp_by;
+  if (!impBy) return reply.code(400).send({ error: 'Not an impersonated session' });
+  const admin = db.prepare('SELECT * FROM users WHERE id = ? AND is_platform = 1').get(impBy);
+  if (!admin) return reply.code(403).send({ error: 'Platform admin no longer valid' });
+  audit(admin.id, 'exit_impersonation', req.user.id, `Returned to platform from ${req.user.email}`);
+  const token = jwt.sign({ id: admin.id, email: admin.email, name: admin.name, guest: !!admin.is_guest, platform: 1, platform_only: !!admin.platform_only }, JWT_SECRET, { expiresIn: '7d' });
+  return { token };
 });
 
 startDigestScheduler();
