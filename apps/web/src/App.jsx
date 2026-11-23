@@ -129,6 +129,12 @@ export default function App() {
   const [chatUnread, setChatUnread] = useState({}); // conv_id -> unseen count
   const [platformOrgs, setPlatformOrgs] = useState([]);
   const [walletData, setWalletData] = useState(null);
+  const [theme, setTheme] = useState(() => localStorage.getItem('omnicrm_theme') || 'light');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('omnicrm_theme', theme);
+  }, [theme]);
   const [chatWatermarks, setChatWatermarks] = useState(() => {
     try { return JSON.parse(localStorage.getItem('omnicrm_chat_seen') || '{}'); } catch { return {}; }
   });
@@ -572,6 +578,9 @@ export default function App() {
           <button className="icon-btn hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu"><Icon name="menu" size={22} /></button>
           <div className="logo topbar-logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
           <div className="topbar-actions">
+            <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle dark mode">
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} />
+            </button>
             <button className="icon-btn" onClick={() => { setInvUpdOpen(!invUpdOpen); setNotifOpen(false); if (!invUpdOpen) loadInvUpdates(); }} aria-label="Inventory updates">
               <Icon name="archive" size={20} />
               {invUnread > 0 && <b className="notif-badge">{invUnread}</b>}
