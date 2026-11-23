@@ -344,3 +344,5 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 .platform-top .logo { padding-bottom: 0; }
 .platform-main { max-width: 1000px; margin: 0 auto; padding: 28px 5% 60px; }
 .platform-main h1 { font-size: 24px; letter-spacing: -0.4px; margin-bottom: 8px; }
+.imp-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--warn-soft); border: 1px dashed var(--warn-line); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 13.5px; color: var(--warn-ink); }
+.imp-banner span { display: inline-flex; align-items: center; gap: 8px; }
