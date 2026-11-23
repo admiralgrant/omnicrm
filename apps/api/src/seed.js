@@ -3,7 +3,7 @@
 import bcrypt from 'bcryptjs';
 import db from './db.js';
 
-const email = 'grant@besconpaints.com';
+const email = 'grant@omnicrm.com';
 const password = 'omnicrm-demo';
 
 let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
@@ -169,31 +169,31 @@ const mkStaff = (name, email, phone, department, role, salary, bank, pensionRate
     .run(uid, name, email, phone, department, role, salary, bank, pensionRate, hmo, onboarding, nextOfKin, canLogin, password ? bcrypt.hashSync(password, 10) : null);
 };
 
-mkStaff('Adaeze Nwosu', 'adaeze@besconpaints.com', '08061112233', 'sales', 'Sales Lead', 320000, 'GTBank · 0123456789', 8, 'Hygeia Silver', 'active', 'Chidi Nwosu · 08051112233', 1, 'staff-demo');
-mkStaff('Tunde Bakare', 'tunde@besconpaints.com', '08072223344', 'sales', 'Field Sales Rep', 210000, 'Access Bank · 0987654321', 8, 'Hygeia Silver', 'orientation', 'Folake Bakare · 08062223344', 1, 'staff-demo');
-mkStaff('Funmi Adeyemi', 'funmi@besconpaints.com', '08083334455', 'support', 'Support Lead', 250000, 'Zenith Bank · 0111222333', 8, 'AXA Mansard Basic', 'active', 'Segun Adeyemi · 08073334455', 1, 'staff-demo');
-mkStaff('Ibrahim Musa', 'ibrahim@besconpaints.com', '08094445566', 'inventory', 'Store Manager', 230000, 'First Bank · 0222333444', 8, 'AXA Mansard Basic', 'active', 'Aisha Musa · 08084445566', 1, 'staff-demo');
-mkStaff('Ngozi Okafor', 'ngozi@besconpaints.com', '08105556677', 'hr', 'HR Officer', 280000, 'UBA · 0333444555', 8, 'Hygeia Gold', 'documents', 'Emeka Okafor · 08095556677', 1, 'staff-demo');
-mkStaff('Yemi Alade', 'yemi@besconpaints.com', '08116667788', 'account', 'Accountant', 300000, 'Stanbic · 0444555666', 8, 'Hygeia Gold', 'invited', 'Bisi Alade · 08107778899', 1, 'staff-demo');
+mkStaff('Adaeze Nwosu', 'adaeze@omnicrm.com', '08061112233', 'sales', 'Sales Lead', 320000, 'GTBank · 0123456789', 8, 'Hygeia Silver', 'active', 'Chidi Nwosu · 08051112233', 1, 'staff-demo');
+mkStaff('Tunde Bakare', 'tunde@omnicrm.com', '08072223344', 'sales', 'Field Sales Rep', 210000, 'Access Bank · 0987654321', 8, 'Hygeia Silver', 'orientation', 'Folake Bakare · 08062223344', 1, 'staff-demo');
+mkStaff('Funmi Adeyemi', 'funmi@omnicrm.com', '08083334455', 'support', 'Support Lead', 250000, 'Zenith Bank · 0111222333', 8, 'AXA Mansard Basic', 'active', 'Segun Adeyemi · 08073334455', 1, 'staff-demo');
+mkStaff('Ibrahim Musa', 'ibrahim@omnicrm.com', '08094445566', 'inventory', 'Store Manager', 230000, 'First Bank · 0222333444', 8, 'AXA Mansard Basic', 'active', 'Aisha Musa · 08084445566', 1, 'staff-demo');
+mkStaff('Ngozi Okafor', 'ngozi@omnicrm.com', '08105556677', 'hr', 'HR Officer', 280000, 'UBA · 0333444555', 8, 'Hygeia Gold', 'documents', 'Emeka Okafor · 08095556677', 1, 'staff-demo');
+mkStaff('Yemi Alade', 'yemi@omnicrm.com', '08116667788', 'account', 'Accountant', 300000, 'Stanbic · 0444555666', 8, 'Hygeia Gold', 'invited', 'Bisi Alade · 08107778899', 1, 'staff-demo');
 
 // commission rates for sales staff
-db.prepare("UPDATE staff SET commission_rate = 5 WHERE email = 'adaeze@besconpaints.com'").run();
-db.prepare("UPDATE staff SET commission_rate = 3 WHERE email = 'tunde@besconpaints.com'").run();
+db.prepare("UPDATE staff SET commission_rate = 5 WHERE email = 'adaeze@omnicrm.com'").run();
+db.prepare("UPDATE staff SET commission_rate = 3 WHERE email = 'tunde@omnicrm.com'").run();
 
 // assign customer accounts to sales reps (commission attribution)
 const adaezeAccounts = ['Alpha Mead Group', 'Global Property & Facilities International (GPFI)', 'Knight Frank Nigeria', 'Eko Maintenance Limited', 'James Cubitt Facilities Management', 'Protech Facility Management', 'Arkland Facilities Management', 'Elalan Facilities Services', 'Bloom Projects & Facilities Management', 'Total Facilities Management Ltd'];
 const tundeAccounts = ['Alhaji Bello (Wholesaler)', 'Mama Nkechi Retail', 'El-Sultan Facility Management', 'Propertygate Facilities Management', 'ATIS Facilities', 'Max-Migold Facilities Management', 'Green Facilities Limited', 'Blue Mahogany Facilities', 'Jide Taiwo Facilities Management', 'Prime Facilities Management'];
-const adaezeId = db.prepare("SELECT id FROM staff WHERE email = 'adaeze@besconpaints.com'").get().id;
-const tundeId = db.prepare("SELECT id FROM staff WHERE email = 'tunde@besconpaints.com'").get().id;
+const adaezeId = db.prepare("SELECT id FROM staff WHERE email = 'adaeze@omnicrm.com'").get().id;
+const tundeId = db.prepare("SELECT id FROM staff WHERE email = 'tunde@omnicrm.com'").get().id;
 for (const comp of adaezeAccounts) db.prepare('UPDATE contacts SET staff_id = ? WHERE company = ? AND user_id = ?').run(adaezeId, comp, uid);
 for (const comp of tundeAccounts) db.prepare('UPDATE contacts SET staff_id = ? WHERE company = ? AND user_id = ?').run(tundeId, comp, uid);
 
 const st = (email) => db.prepare('SELECT id FROM staff WHERE email = ?').get(email).id;
-db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('tunde@besconpaints.com'), 60000, 'School fees', 'pending');
-db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('funmi@besconpaints.com'), 45000, 'Medical', 'approved');
-db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('adaeze@besconpaints.com'), 80000, 'Family emergency', 'repaid');
-db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('funmi@besconpaints.com'), 'annual', '2026-12-05', '2026-12-12', 'pending');
-db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('ibrahim@besconpaints.com'), 'sick', '2026-11-18', '2026-11-19', 'approved');
+db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('tunde@omnicrm.com'), 60000, 'School fees', 'pending');
+db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('funmi@omnicrm.com'), 45000, 'Medical', 'approved');
+db.prepare('INSERT INTO salary_advances (user_id, staff_id, amount, reason, status) VALUES (?, ?, ?, ?, ?)').run(uid, st('adaeze@omnicrm.com'), 80000, 'Family emergency', 'repaid');
+db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('funmi@omnicrm.com'), 'annual', '2026-12-05', '2026-12-12', 'pending');
+db.prepare('INSERT INTO leaves (user_id, staff_id, type, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)').run(uid, st('ibrahim@omnicrm.com'), 'sick', '2026-11-18', '2026-11-19', 'approved');
 
 console.log('Seeded HR module (staff, advances, leave).');
 
@@ -233,12 +233,12 @@ db.prepare("INSERT INTO remittances (user_id, period, type, amount, due_date, st
 
 const today = new Date();
 const fmtDay = (d) => d.toISOString().slice(0, 10);
-const shiftsSeed = [['adaeze@besconpaints.com', 'morning'], ['tunde@besconpaints.com', 'morning'], ['funmi@besconpaints.com', 'afternoon'], ['ibrahim@besconpaints.com', 'morning'], ['ngozi@besconpaints.com', 'morning'], ['yemi@besconpaints.com', 'morning']];
+const shiftsSeed = [['adaeze@omnicrm.com', 'morning'], ['tunde@omnicrm.com', 'morning'], ['funmi@omnicrm.com', 'afternoon'], ['ibrahim@omnicrm.com', 'morning'], ['ngozi@omnicrm.com', 'morning'], ['yemi@omnicrm.com', 'morning']];
 for (let i = 0; i < 3; i++) {
   const day = new Date(today.getTime() + i * 864e5);
   for (const [email, shift] of shiftsSeed) {
     db.prepare('INSERT INTO shifts (user_id, staff_id, date, shift) VALUES (?, ?, ?, ?) ON CONFLICT(staff_id, date) DO NOTHING')
-      .run(uid, st(email), fmtDay(day), i === 2 && email === 'funmi@besconpaints.com' ? 'off' : shift);
+      .run(uid, st(email), fmtDay(day), i === 2 && email === 'funmi@omnicrm.com' ? 'off' : shift);
   }
 }
 
