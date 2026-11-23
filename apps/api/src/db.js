@@ -255,6 +255,7 @@ const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name)
 if (!userCols.includes('is_guest')) db.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0');
 // migration: platform (super-admin) flag + audit trail for vendor actions
 if (!userCols.includes('is_platform')) db.exec('ALTER TABLE users ADD COLUMN is_platform INTEGER NOT NULL DEFAULT 0');
+if (!userCols.includes('platform_only')) db.exec('ALTER TABLE users ADD COLUMN platform_only INTEGER NOT NULL DEFAULT 0');
 db.exec(`
 CREATE TABLE IF NOT EXISTS platform_audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
