@@ -1,6 +1,6 @@
 # OmniCRM — Accounts & Logins
 
-Live mirror of the Google Sheet: https://docs.google.com/spreadsheets/d/1w3knScfbVyQ2Y55rp3Qs31ndGuYb0tCy94ONKivKOVY/edit
+Live mirror of the Google Sheet (in the Admirals folder on Drive): https://docs.google.com/spreadsheets/d/1U6I51McNhmCjfA5lkcUaoT01hXdQ4INwKTMZlN2oPcw/edit
 (The sheet is the source of truth; update both when adding accounts. Last updated 2026-11-23.)
 
 ## Super Admin (platform console)
