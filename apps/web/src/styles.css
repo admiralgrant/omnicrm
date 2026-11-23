@@ -346,3 +346,7 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 .platform-main h1 { font-size: 24px; letter-spacing: -0.4px; margin-bottom: 8px; }
 .imp-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--warn-soft); border: 1px dashed var(--warn-line); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 13.5px; color: var(--warn-ink); }
 .imp-banner span { display: inline-flex; align-items: center; gap: 8px; }
+/* platform: per-org feature toggles */
+.feat-panel { margin: 4px 0 14px; padding: 14px 16px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 18px; }
+.feat-panel-head { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.feat-toggle { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; text-transform: capitalize; }
