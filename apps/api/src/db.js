@@ -253,6 +253,55 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items ON invoice_items(invoice_id);
 // migration: users.is_guest for read-only demo accounts
 const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
 if (!userCols.includes('is_guest')) db.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0');
+// migration: platform (super-admin) flag + audit trail for vendor actions
+if (!userCols.includes('is_platform')) db.exec('ALTER TABLE users ADD COLUMN is_platform INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+CREATE TABLE IF NOT EXISTS platform_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  target_id INTEGER,
+  detail TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_platform_audit ON platform_audit(created_at);
+`);
+// migration: org wallet (virtual balance + in/out ledger; real money moves via Paystack)
+db.exec(`
+CREATE TABLE IF NOT EXISTS wallets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL UNIQUE,
+  balance_ngn REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  direction TEXT NOT NULL,              -- in | out
+  amount_ngn REAL NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'adjustment', -- payment | topup | payout | adjustment
+  ref_type TEXT,
+  ref_id INTEGER,
+  note TEXT,
+  status TEXT,                          -- requested | completed (payouts)
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx ON wallet_transactions(user_id, created_at);
+`);
+// migration: AI audit trail (every generated draft, its source, and when)
+db.exec(`
+CREATE TABLE IF NOT EXISTS ai_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  contact_id INTEGER,
+  body TEXT,
+  source TEXT NOT NULL DEFAULT 'rules',   -- rules | llm
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_audit ON ai_audit(user_id, created_at);
+`);
 
 // migration: commission engine — contact sales rep, staff rate, payslip line
 const contactCols = db.prepare("PRAGMA table_info(contacts)").all().map((c) => c.name);
