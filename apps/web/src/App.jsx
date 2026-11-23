@@ -285,7 +285,7 @@ export default function App() {
   if (loading) return <div className="center">Loading…</div>;
 
   if (!token) {
-    if (authMode === 'landing') return <Landing onLogin={() => setAuthMode('login')} onStart={() => setAuthMode('register')} />;
+    if (authMode === 'landing') return <Landing onLogin={() => setAuthMode('login')} onStart={() => setAuthMode('register')} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />;
     return (
       <Login
         mode={authMode}
@@ -2447,7 +2447,7 @@ function ReceiptThumb({ id, small }) {
   return <img src={url} alt="receipt" style={{ height: small ? 44 : 120, borderRadius: 8, border: '1px solid var(--line)', cursor: 'zoom-in' }} onClick={(e) => { e.stopPropagation(); window.open(url, '_blank'); }} />;
 }
 
-function Landing({ onLogin, onStart }) {
+function Landing({ onLogin, onStart, theme, onToggleTheme }) {
   const features = [
     ['trend', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
     ['chat', 'WhatsApp AI Inbox', 'One inbox for every customer chat, the AI drafts, you approve and send.'],
@@ -2477,6 +2477,9 @@ function Landing({ onLogin, onStart }) {
           <a href="#pricing">Pricing</a>
         </nav>
         <button className="btn-ghost" onClick={onLogin}>Log in</button>
+        <button className="icon-btn" onClick={onToggleTheme} aria-label="Toggle dark mode" title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+        </button>
       </header>
 
       <section className="hero">
@@ -2588,7 +2591,7 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
         </p>
         <p className="muted demo">{sessionStorage.getItem('omnicrm_demo')
           ? 'Guest demo: guest@omnicrm.ng / guest-demo (read-only)'
-          : 'Demo: grant@besconpaints.com / omnicrm-demo'}</p>
+          : 'Demo: grant@omnicrm.com / omnicrm-demo'}</p>
       </div>
     </div>
   );
