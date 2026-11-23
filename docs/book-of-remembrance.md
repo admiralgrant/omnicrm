@@ -39,7 +39,9 @@ Say **"book of remembrance"** and I pull this up.
 - **Shared-inbox features**: assign chat to a teammate, "who's typing" — noted for later.
 - **Ads Studio full build** — guided setup, copy/creative gen, Meta+Google API launch, ROAS analytics, %-of-spend fee. *(feasible; spec exists, not built)*
 - **Payment receipt image upload** — DONE for photos, but name-picker for @mentions etc.
-- **Sales rep invoice visibility** — should reps see only their own customers' invoices, only after delivery? *(question raised, not decided)*
+- **Sales rep invoice visibility** — ~~question raised, not decided~~ → **DECIDED + BUILT (23 Nov):** plain sales reps see ONLY their own customers' invoices and only after delivery (status sent/paid/overdue); draft invoices hidden; department leads (role contains Lead/Head/Manager), admin, HR and CEO see ALL invoices. Enforced server-side on list + single fetch. Verified: Tunde sees 2 (own only), Adaeze/Yemi/Ngozi see 15, cross-customer fetch 403.
+- **Live demo DB anonymization** — ~~flagged~~ → **DONE (23 Nov):** live seed contacts renamed to fictional companies (Zoria Access, Bescon Global Development, Jacoco Beverage, Prime Care, Summit Crest, Lekki Crown, Heritage Gate) with fake phones/emails; deal titles updated. NOTE: one user-added contact ("Bookshop", real gmail) was left untouched, it is your own entry, say the word to scrub it too.
+- **Time-aware greeting** — **BUILT (23 Nov):** dashboard greeting uses the local clock: Good morning (before 12), Good afternoon (12-17), Good evening (after 17).
 - **Custom-order pricing** — ~~question raised, not locked~~ → **DECIDED:** rep proposes; CEO/admin (or head of dept) approves the discount/custom price; the approved number becomes the invoice. Reps can propose discounts but never set final price. Two legs: sales proposes → leadership approves → accounts raises invoice with approved price.
 - **Support/HR channels** — keep fully private, or allow view-only from other depts? *(decided: private for now)*
 - **Real-time chat delivery** — ~~not auto-push~~ → **BUILT:** 8s polling with unread badges; true websockets remain a future upgrade.
