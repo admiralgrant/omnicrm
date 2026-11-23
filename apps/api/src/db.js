@@ -302,6 +302,23 @@ CREATE TABLE IF NOT EXISTS ai_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_audit ON ai_audit(user_id, created_at);
 `);
+// migration: anonymize previously seeded real-company demo data (NDPR-safe public demos)
+const ANON_MAP = {
+  'Alpha Mead Group': ['Zoria Access Limited', '08010000001', 'procurement@zoriaaccess.demo'],
+  'GPFI': ['Bescon Global Development', '08010000002', 'bd@besconglobal.demo'],
+  'Knight Frank Nigeria': ['Jacoco Beverage', '08010000003', 'facilities@jacoco.demo'],
+  'Prime Facilities Management': ['Prime Care Services Ltd', '08010000004', 'care@primecare.demo'],
+  'El-Sultan Facility Management': ['Summit Crest Facilities', '08010000005', 'hello@summitcrest.demo'],
+  'Eko Maintenance Limited': ['Lekki Crown Maintenance', '08010000006', 'ops@lekkicrown.demo'],
+  'James Cubitt Facilities Management': ['Heritage Gate FM Group', '08010000007', 'fm@heritagegate.demo'],
+};
+for (const [real, [fakeName, fakePhone, fakeEmail]] of Object.entries(ANON_MAP)) {
+  const hit = db.prepare('SELECT id FROM contacts WHERE company = ?').get(real);
+  if (hit) {
+    db.prepare('UPDATE contacts SET company = ?, phone = ?, email = ? WHERE company = ?').run(fakeName, fakePhone, fakeEmail, real);
+    db.prepare('UPDATE deals SET title = REPLACE(title, ?, ?) WHERE title LIKE ?').run(real, fakeName, `%${real}%`);
+  }
+}
 
 // migration: commission engine — contact sales rep, staff rate, payslip line
 const contactCols = db.prepare("PRAGMA table_info(contacts)").all().map((c) => c.name);
