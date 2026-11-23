@@ -465,12 +465,32 @@ app.get('/fx', async () => {
 // ---- invoicing ----
 const invStatus = (inv) => (inv.status === 'sent' && inv.due_date < new Date().toISOString().slice(0, 10) ? 'overdue' : inv.status);
 
-app.get('/invoices', { preHandler: requireAuth }, async (req) => {
+// invoice visibility: dept leads + admin + HR + CEO see everything; sales reps see only
+// their own customers' invoices once delivery has happened (status sent/paid/overdue)
+const invoiceAdmin = (u) => {
+  if (!u.dept) return true; // owner / CEO
+  if (u.dept === 'hr' || u.dept === 'account') return true;
+  if (u.staff_id) {
+    const s = db.prepare('SELECT role FROM staff WHERE id = ?').get(u.staff_id);
+    if (s && /lead|head|manager/i.test(s.role || '')) return true; // department lead
+  }
+  return false;
+};
+const visibleInvoices = (req) => {
   const rows = db.prepare(`
-    SELECT i.*, c.company, c.name FROM invoices i
+    SELECT i.*, c.company, c.name, c.staff_id AS contact_staff FROM invoices i
     JOIN contacts c ON c.id = i.contact_id
-    WHERE i.user_id = ? ORDER BY i.id DESC`).all(req.user.id);
-  const invoices = rows.map((i) => ({ ...i, status: invStatus(i) }));
+    WHERE i.user_id = ? ORDER BY i.id DESC`).all(req.user.id)
+    .map((i) => ({ ...i, status: invStatus(i) }));
+  if (invoiceAdmin(req.user)) return rows;
+  if (req.user.dept === 'sales') {
+    return rows.filter((i) => i.contact_staff === req.user.staff_id && ['sent', 'paid', 'overdue'].includes(i.status));
+  }
+  return [];
+};
+
+app.get('/invoices', { preHandler: requireAuth }, async (req) => {
+  const invoices = visibleInvoices(req);
   const counts = { draft: 0, sent: 0, paid: 0, overdue: 0 };
   let receivables = 0;
   for (const i of invoices) {
@@ -481,8 +501,12 @@ app.get('/invoices', { preHandler: requireAuth }, async (req) => {
 });
 
 app.get('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
-  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone, c.email FROM invoices i JOIN contacts c ON c.id = i.contact_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
+  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone, c.email, c.staff_id AS contact_staff FROM invoices i JOIN contacts c ON c.id = i.contact_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  // enforce the same visibility rule as the list
+  const vis = invoiceAdmin(req.user)
+    || (req.user.dept === 'sales' && inv.contact_staff === req.user.staff_id && ['sent', 'paid', 'overdue'].includes(invStatus(inv)));
+  if (!vis) return reply.code(403).send({ error: 'You can only see your own delivered invoices' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
   return { invoice: { ...inv, status: invStatus(inv) }, items, pay_link: `/pay.html?token=${inv.pay_token}` };
 });
