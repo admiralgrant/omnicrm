@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import Icon from './Icon.jsx';
 
 const API = '/api';
 const tokenKey = 'omnicrm_token';
@@ -72,7 +73,7 @@ export default function App() {
     const t = localStorage.getItem(tokenKey);
     if (!t) return null;
     try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
-  }); // {name, dept, staff} — department-scoped login
+  }); // {name, dept, staff}, department-scoped login
   const [orgFeats, setOrgFeats] = useState(null);
   const [hr, setHr] = useState(null);
   const [hrTab, setHrTab] = useState('staff');
@@ -122,6 +123,15 @@ export default function App() {
   const [digest, setDigest] = useState(null);
   const [digestPeriod, setDigestPeriod] = useState('daily');
   const [stockInForm, setStockInForm] = useState(null); // { product_id, qty, note }
+  const [drawerOpen, setDrawerOpen] = useState(false); // mobile hamburger drawer
+  const [invUpdOpen, setInvUpdOpen] = useState(false); // inventory updates panel
+  const [invUpdates, setInvUpdates] = useState([]);
+  const [chatUnread, setChatUnread] = useState({}); // conv_id -> unseen count
+  const [platformOrgs, setPlatformOrgs] = useState([]);
+  const [walletData, setWalletData] = useState(null);
+  const [chatWatermarks, setChatWatermarks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('omnicrm_chat_seen') || '{}'); } catch { return {}; }
+  });
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
@@ -167,9 +177,61 @@ export default function App() {
     })();
   }, [token]);
 
+  // real-time chat: poll unread counts every 8s; refresh the open conversation when new messages land
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    const poll = async () => {
+      try {
+        const q = '?watermarks=' + encodeURIComponent(JSON.stringify(chatWatermarksRef.current));
+        const r = await api('/chat/unread' + q);
+        if (!alive) return;
+        const unread = {};
+        for (const row of r.rows) if (row.unseen > 0) unread[row.conversation_id] = row.unseen;
+        setChatUnread(unread);
+        // refresh the open conversation if it has new messages
+        if (activeConvRef.current?.conversation?.id) {
+          const convId = activeConvRef.current.conversation.id;
+          const wm = chatWatermarksRef.current[convId] || 0;
+          const row = r.rows.find((x) => x.conversation_id === convId);
+          if (row && row.last_message_id > wm) {
+            const fresh = await api(`/chat/conversations/${convId}`);
+            if (alive) setActiveConv(fresh);
+            const seen = { ...chatWatermarksRef.current, [convId]: row.last_message_id };
+            chatWatermarksRef.current = seen;
+            setChatWatermarks(seen);
+            localStorage.setItem('omnicrm_chat_seen', JSON.stringify(seen));
+          }
+        }
+      } catch { /* server hiccup */ }
+    };
+    const iv = setInterval(poll, 8000);
+    poll();
+    return () => { alive = false; clearInterval(iv); };
+  }, [token]);
+
+  const chatWatermarksRef = React.useRef(chatWatermarks);
+  chatWatermarksRef.current = chatWatermarks;
+  const activeConvRef = React.useRef(activeConv);
+  activeConvRef.current = activeConv;
+  const totalChatUnread = Object.values(chatUnread).reduce((s, n) => s + n, 0);
+
+  const markConvSeen = async (convId, lastMessageId) => {
+    const seen = { ...chatWatermarks, [convId]: lastMessageId };
+    setChatWatermarks(seen);
+    localStorage.setItem('omnicrm_chat_seen', JSON.stringify(seen));
+    setChatUnread((u) => { const n = { ...u }; delete n[convId]; return n; });
+  };
+
+  useEffect(() => {
+    if (token && view === 'wallet') {
+      (async () => { try { setWalletData(await api('/wallet')); } catch { /* n/a */ } })();
+    }
+  }, [view, token]);
+
   const login = async (email, password) => {
     if (sessionStorage.getItem('omnicrm_demo') && email !== 'guest@omnicrm.ng') {
-      throw new Error('This demo link is guest-only. Sign in with guest@omnicrm.ng / guest-demo — or open the app without the demo link to sign in as an admin.');
+      throw new Error('This demo link is guest-only. Sign in with guest@omnicrm.ng / guest-demo, or open the app without the demo link to sign in as an admin.');
     }
     const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     localStorage.setItem(tokenKey, d.token);
@@ -197,7 +259,7 @@ export default function App() {
     support: ['dashboard', 'support', 'inbox', 'mail', 'feedback', 'reports'],
     inventory: ['dashboard', 'inventory', 'product', 'mail', 'reports'],
     hr: ['dashboard', 'hr', 'mail', 'reports'],
-    account: ['dashboard', 'invoices', 'orders', 'mail', 'reports'],
+    account: ['dashboard', 'invoices', 'orders', 'mail', 'reports', 'wallet'],
   };
   const allowed = (section) => {
     if (section === 'portal') return !!(me?.staff_id || me?.staff);
@@ -205,7 +267,7 @@ export default function App() {
     if (!me || !me.dept) return true;
     return (FRONT_ACCESS[me.dept] || []).includes(section);
   };
-  const isGuest = !!me?.guest; // read-only demo session — hide admin/mutating controls
+  const isGuest = !!me?.guest; // read-only demo session, hide admin/mutating controls
   const opsMode = !me?.dept || me?.dept === 'account' || me?.dept === 'hr'; // can approve orders & post payments
 
   if (loading) return <div className="center">Loading…</div>;
@@ -270,7 +332,7 @@ export default function App() {
   const shareWhatsApp = () => {
     const intl = String(activeInv.phone || '').replace(/^0/, '234');
     const link = `${location.origin}${payLink}`;
-    const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
+    const lines = invItems.map((it) => `• ${it.description} × ${it.qty}, ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
     const feeLine = activeInv.fee > 0 ? `\nProcessing fee: ${fmtCur(activeInv.fee, activeInv.currency)}` : '';
     const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
     const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ${fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)} (incl. 7.5% VAT${activeInv.fee > 0 ? ' + processing fee' : ''})${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
@@ -295,7 +357,7 @@ export default function App() {
   };
   const emailInvoice = () => {
     const link = `${location.origin}${payLink}`;
-    const lines = invItems.map((it) => `• ${it.description} × ${it.qty} — ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
+    const lines = invItems.map((it) => `• ${it.description} × ${it.qty}, ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
     const feeLine = activeInv.fee > 0 ? `\nProcessing fee: ${fmtCur(activeInv.fee, activeInv.currency)}` : '';
     const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
     const subject = `Invoice ${activeInv.number} from ${activeInv.company || 'us'}`;
@@ -434,6 +496,13 @@ export default function App() {
       items: items.map((it) => ({ description: it.description, qty: it.qty, unit_price: it.unit_price })),
     });
   };
+  const loadInvUpdates = async () => {
+    try {
+      const r = await api('/inventory-updates');
+      setInvUpdates(r.rows);
+    } catch { /* older api */ }
+  };
+  const invUnread = invUpdates.filter((n) => !n.read).length;
   const saveInvEdit = async () => {
     await api(`/invoices/${invEdit.id}`, { method: 'PUT', body: JSON.stringify({ due_date: invEdit.due_date, currency: invEdit.currency, items: invEdit.items }) });
     const [iv, det] = await Promise.all([api('/invoices'), api(`/invoices/${invEdit.id}`)]);
@@ -443,26 +512,27 @@ export default function App() {
   };
 
   const nav = [
-    ['dashboard', '🏠', 'Dashboard'],
-    ['customers', '👥', 'Customers'],
-    ['inbox', '💬', 'Inbox'],
-    ['invoices', '🧾', 'Invoicing'],
-    ['orders', '📦', 'Orders'],
-    ['mail', '✉️', 'In-Mail'],
-    ['followups', '📞', 'Follow-ups'],
-    ['feedback', '📝', 'Feedback'],
-    ['reports', '📊', 'Reports'],
-    ['portal', '👤', 'My Portal'],
-    ['ads', '📣', 'Ads Studio'],
+    ['dashboard', 'home', 'Dashboard'],
+    ['customers', 'users', 'Customers'],
+    ['inbox', 'chat', 'Inbox'],
+    ['invoices', 'receipt', 'Invoicing'],
+    ['orders', 'package', 'Orders'],
+    ['mail', 'mail', 'In-Mail'],
+    ['followups', 'phone', 'Follow-ups'],
+    ['feedback', 'file', 'Feedback'],
+    ['reports', 'chart', 'Reports'],
+    ['portal', 'user', 'My Portal'],
+    ['ads', 'megaphone', 'Ads Studio'],
+    ['wallet', 'wallet', 'Wallet'],
   ];
 
   const depts = [
-    ['sales', '📈 Sales'],
-    ['support', '🛟 Support'],
-    ['inventory', '📦 Inventory'],
-    ['product', '🏷️ Product'],
-    ['hr', '🧑💼 HR'],
-    ['account', '👤 Account'],
+    ['sales', 'trend', 'Sales'],
+    ['support', 'buoy', 'Support'],
+    ['inventory', 'package', 'Inventory'],
+    ['product', 'tag', 'Product'],
+    ['hr', 'briefcase', 'HR'],
+    ['account', 'user', 'Account'],
   ];
 
   return (
@@ -471,82 +541,125 @@ export default function App() {
         <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
-            <span>{icon}</span>{label}
+            <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
+            {k === 'mail' && totalChatUnread > 0 && <b className="unread-badge nav-unread">{totalChatUnread}</b>}
           </div>
         ))}
-        <div className="nav-item" onClick={logout}>🚪 Log out</div>
+        <div className="nav-item" onClick={logout}><span className="nav-ic"><Icon name="logout" size={17} /></span>Log out</div>
+      </aside>
+
+      {/* mobile drawer: every destination behind the hamburger */}
+      <div className={`drawer-backdrop ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
+      <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
+        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
+          <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setDrawerOpen(false); }}>
+            <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
+            {k === 'mail' && totalChatUnread > 0 && <b className="unread-badge nav-unread">{totalChatUnread}</b>}
+          </div>
+        ))}
+        <div className="nav-item" onClick={logout}><span className="nav-ic"><Icon name="logout" size={17} /></span>Log out</div>
       </aside>
 
       <main className="main">
-        <div className="mobile-topbar">
-          <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
-          <button className="btn-ghost sm" onClick={logout}>🚪 Log out</button>
-        </div>
-        {view === 'dashboard' && dash && (
-          <>
-            <h1>Good morning{me?.name ? `, ${me.name.split(' ')[0]}` : ''} 👋{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
-            <div className="dept-pills">
-              {depts.filter(([k]) => allowed(k)).map(([k, label]) => (
-                <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}>{label}</button>
-              ))}
-            </div>
-            <div className="notif-bar">
-              <button className="pill notif-pill" onClick={() => setNotifOpen(!notifOpen)}>
-                🔔 Notifications{!notifOpen && notifs.filter((n) => !n.read).length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read).length}</b>}{notifOpen && <b className="notif-badge">✕</b>}
-              </button>
-              {notifOpen && <div className="notif-backdrop" onClick={() => setNotifOpen(false)} />}
-              {notifOpen && (
-                <div className="notif-panel">
-                  <div className="inv-head" style={{ marginBottom: 6 }}>
-                    <b>Notifications</b>
-                    <button className="btn-ghost sm" onClick={async () => { await api('/notifications/read', { method: 'POST' }); setNotifs((await api('/notifications')).rows); }}>Mark all read</button>
-                    <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={() => setNotifOpen(false)}>✕ Close</button>
+        <div className="topbar">
+          <button className="icon-btn hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu"><Icon name="menu" size={22} /></button>
+          <div className="logo topbar-logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+          <div className="topbar-actions">
+            <button className="icon-btn" onClick={() => { setInvUpdOpen(!invUpdOpen); setNotifOpen(false); if (!invUpdOpen) loadInvUpdates(); }} aria-label="Inventory updates">
+              <Icon name="archive" size={20} />
+              {invUnread > 0 && <b className="notif-badge">{invUnread}</b>}
+            </button>
+            <button className="icon-btn" onClick={() => { setNotifOpen(!notifOpen); setInvUpdOpen(false); }} aria-label="Notifications">
+              <Icon name="bell" size={20} />
+              {!notifOpen && notifs.filter((n) => !n.read && n.kind !== 'inventory_digest').length > 0 && <b className="notif-badge">{notifs.filter((n) => !n.read && n.kind !== 'inventory_digest').length}</b>}
+              {notifOpen && <b className="notif-badge"><Icon name="x" size={10} /></b>}
+            </button>
+            {invUpdOpen && <div className="notif-backdrop" onClick={() => setInvUpdOpen(false)} />}
+            {invUpdOpen && (
+              <div className="notif-panel">
+                <div className="inv-head" style={{ marginBottom: 6 }}>
+                  <b><Icon name="archive" size={14} /> Inventory Updates</b>
+                  <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={() => setInvUpdOpen(false)}>Close</button>
+                </div>
+                {invUpdates.length === 0 && <p className="muted" style={{ fontSize: 13 }}>No inventory updates yet. The daily digest arrives at 8am.</p>}
+                {invUpdates.map((n) => (
+                  <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1, cursor: 'pointer' }}
+                    onClick={async () => {
+                      await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
+                      const p = n.link?.period || 'daily';
+                      setInvUpdOpen(false);
+                      setView('dashboard'); setDept('inventory'); setInvTab('digest'); setDigestPeriod(p);
+                      setDigest((await api(`/ai/inventory-digest?period=${p}`)).digest);
+                      loadInvUpdates();
+                    }}>
+                    <span style={{ fontSize: 13 }}>{n.message} <span className="notif-go"><Icon name="chevR" size={12} /></span></span>
                   </div>
-                  {notifs.map((n) => (
-                    <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1, cursor: 'pointer' }}
-                      onClick={async () => {
-                        const link = n.link;
-                        try {
-                          if (link) {
-                            if (link.view === 'mail') {
-                              setView('mail');
-                              if (link.id) setActiveConv(await api(`/chat/conversations/${link.id}`));
-                            } else if (link.view === 'orders') {
-                              setView('orders');
-                            } else if (link.view === 'invoices') {
-                              setView('invoices');
-                            } else if (link.view === 'dashboard') {
-                              setView('dashboard');
-                              setDept(link.dept || 'sales');
-                            } else if (link.view === 'inventory') {
-                              setView('dashboard');
-                              setDept('inventory');
-                            }
-                          } else if (n.kind === 'mention') {
-                            // older mention without a link — still open the chat
+                ))}
+              </div>
+            )}
+            {notifOpen && <div className="notif-backdrop" onClick={() => setNotifOpen(false)} />}
+            {notifOpen && (
+              <div className="notif-panel">
+                <div className="inv-head" style={{ marginBottom: 6 }}>
+                  <b>Notifications</b>
+                  <button className="btn-ghost sm" onClick={async () => { await api('/notifications/read', { method: 'POST' }); setNotifs((await api('/notifications')).rows); }}>Mark all read</button>
+                  <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={() => setNotifOpen(false)}>Close</button>
+                </div>
+                {notifs.filter((n) => n.kind !== 'inventory_digest').map((n) => (
+                  <div key={n.id} className="notif-line" style={{ opacity: n.read ? 0.55 : 1, cursor: 'pointer' }}
+                    onClick={async () => {
+                      const link = n.link;
+                      try {
+                        if (link) {
+                          if (link.view === 'mail') {
                             setView('mail');
-                          } else {
-                            // fallback: no destination recorded, just mark read and close
-                            setNotifOpen(false);
-                            await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
-                            setNotifs((await api('/notifications')).rows);
-                            return;
+                            if (link.id) setActiveConv(await api(`/chat/conversations/${link.id}`));
+                          } else if (link.view === 'orders') {
+                            setView('orders');
+                          } else if (link.view === 'invoices') {
+                            setView('invoices');
+                          } else if (link.view === 'dashboard') {
+                            setView('dashboard');
+                            setDept(link.dept || 'sales');
+                          } else if (link.view === 'inventory') {
+                            setView('dashboard');
+                            setDept('inventory');
+                          } else if (link.view === 'wallet') {
+                            setView('wallet');
                           }
+                        } else if (n.kind === 'mention') {
+                          setView('mail');
+                        } else {
                           setNotifOpen(false);
                           await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
                           setNotifs((await api('/notifications')).rows);
-                        } catch (e) { console.error(e); }
-                      }}>
-                      <span>{n.kind === 'payment_received' ? '💰' : n.kind === 'order_delivered' ? '🚚' : n.kind === 'order_approved' ? '✅' : n.kind === 'order_rejected' ? '✕' : n.kind === 'mention' ? '💬' : n.kind === 'stock_update' ? '📦' : n.kind === 'receipt' ? '🧾' : n.kind === 'inventory_digest' ? '📊' : '📦'}</span>
-                      <span style={{ fontSize: 13 }}>{n.message} {n.link && <span className="notif-go">→</span>}</span>
-                    </div>
-                  ))}
-                  {notifs.length === 0 && <p className="muted" style={{ fontSize: 13 }}>Nothing yet — order updates will land here.</p>}
-                </div>
-              )}
+                          return;
+                        }
+                        setNotifOpen(false);
+                        await api('/notifications/read', { method: 'POST', body: JSON.stringify({ id: n.id }) });
+                        setNotifs((await api('/notifications')).rows);
+                      } catch (e) { console.error(e); }
+                    }}>
+                    <span className="notif-ic"><Icon name={n.kind === 'payment_received' ? 'banknote' : n.kind === 'order_delivered' ? 'truck' : n.kind === 'order_approved' ? 'check' : n.kind === 'order_rejected' ? 'x' : n.kind === 'mention' ? 'chat' : n.kind === 'stock_update' ? 'package' : n.kind === 'receipt' ? 'camera' : n.kind === 'wallet' ? 'wallet' : 'bell'} size={14} /></span>
+                    <span style={{ fontSize: 13 }}>{n.message} {n.link && <span className="notif-go"><Icon name="chevR" size={12} /></span>}</span>
+                  </div>
+                ))}
+                {notifs.filter((n) => n.kind !== 'inventory_digest').length === 0 && <p className="muted" style={{ fontSize: 13 }}>Nothing yet. Order updates will land here.</p>}
+              </div>
+            )}
+          </div>
+        </div>
+        {view === 'dashboard' && dash && (
+          <>
+            <h1>Good morning{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
+            <div className="dept-pills">
+              {depts.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
+                <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}><Icon name={icon} size={15} /> {label}</button>
+              ))}
             </div>
             <div className="quick-actions" style={{ marginTop: 0, marginBottom: 14 }}>
-              <button className="btn-ghost sm" onClick={() => generateDeptReport(dept)}>📊 {reportPeriod} report for this section</button>
+              <button className="btn-ghost sm" onClick={() => generateDeptReport(dept)}><Icon name="chart" size={14} /> {reportPeriod} report for this section</button>
             </div>
             {deptReport && deptReport.scope === dept && (
               <div className="card report">
@@ -583,7 +696,7 @@ export default function App() {
                 </div>
                 {followups.length > 0 && (
                   <div className="card">
-                    <h3>✦ AI Follow-ups ready</h3>
+                    <h3><Icon name="sparkles" size={14} /> AI Follow-ups ready</h3>
                     {followups.map((f) => (
                       <div key={f.contact_id} className="followup">
                         <b>{f.company || f.name}</b>
@@ -598,7 +711,7 @@ export default function App() {
                 </div>
                 {pipeline && (
                   <div className="card">
-                    <h3>🔁 Sales Pipeline</h3>
+                    <h3><Icon name="repeat" size={14} /> Sales Pipeline</h3>
                     <div className="dept-pills">
                       {pipeline.stages.map((s) => (
                         <button key={s.stage} className={`pill ${pipeStage === s.stage ? 'active' : ''}`} onClick={() => setPipeStage(s.stage)}>
@@ -632,7 +745,7 @@ export default function App() {
 
             {dept === 'support' && (tktView === 'form' && tktForm ? (
               <div className="card">
-                <h3>{tktForm.id ? '✏️ Edit ticket' : '➕ New ticket'}</h3>
+                <h3>{tktForm.id ? 'Edit ticket' : 'New ticket'}</h3>
                 <label className="inv-label">Subject</label>
                 <input placeholder="e.g. Delivery delay on Lekki Phase 2 site" value={tktForm.subject} onChange={(e) => setTktForm({ ...tktForm, subject: e.target.value })} />
                 <label className="inv-label">Customer (optional)</label>
@@ -655,7 +768,7 @@ export default function App() {
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveTicket}>{tktForm.id ? 'Save changes' : 'Create ticket'}</button>
                   <button className="btn-ghost" onClick={() => { setTktView('list'); setTktForm(null); }}>Cancel</button>
-                  {tktForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteTicket}>🗑 Delete</button>}
+                  {tktForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteTicket}><Icon name="trash" size={14} /> Delete</button>}
                 </div>
               </div>
             ) : (
@@ -667,7 +780,7 @@ export default function App() {
                   <div className="kpi"><div className="label">Inbox unread</div><div className="value">{threads.reduce((s, t) => s + (t.unread || 0), 0)}</div></div>
                 </div>
                 <div className="card">
-                  <div className="inv-head"><h3>🛟 Support Tickets</h3><button className="btn-primary sm" onClick={openNewTicket}>+ New ticket</button></div>
+                  <div className="inv-head"><h3><Icon name="buoy" size={14} /> Support Tickets</h3><button className="btn-primary sm" onClick={openNewTicket}>+ New ticket</button></div>
                   {tickets.map((t) => (
                     <div key={t.id} className="ticket">
                       <div className="ticket-info">
@@ -676,7 +789,7 @@ export default function App() {
                       </div>
                       <span className={`chip ${t.status}`}>{t.status}</span>
                       <span className={`chip pri-${t.priority}`}>{t.priority}</span>
-                      <button className="btn-ghost sm" onClick={() => openEditTicket(t)}>✏️</button>
+                      <button className="btn-ghost sm" onClick={() => openEditTicket(t)}><Icon name="pencil" size={14} /></button>
                     </div>
                   ))}
                 </div>
@@ -685,9 +798,9 @@ export default function App() {
 
             {dept === 'inventory' && (prodView === 'form' && prodForm ? (
               <div className="card">
-                <h3>{prodForm.id ? '✏️ Edit product' : '➕ Add product'}</h3>
+                <h3>{prodForm.id ? 'Edit product' : 'Add product'}</h3>
                 <label className="inv-label">Product name</label>
-                <input placeholder="e.g. Emulsion Paint — Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
+                <input placeholder="e.g. Emulsion Paint, Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
                 <div className="inv-item-row">
                   <div className="inv-field">
                     <label className="inv-label">SKU (stock code)</label>
@@ -721,7 +834,7 @@ export default function App() {
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveProduct}>{prodForm.id ? 'Save changes' : 'Add product'}</button>
                   <button className="btn-ghost" onClick={() => { setProdView('list'); setProdForm(null); }}>Cancel</button>
-                  {prodForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteProduct}>🗑 Delete</button>}
+                  {prodForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteProduct}><Icon name="trash" size={14} /> Delete</button>}
                 </div>
               </div>
             ) : (
@@ -738,7 +851,7 @@ export default function App() {
                 </div>
                 {invTab === 'stock' && (stockInForm ? (
                   <div className="card">
-                    <h3>📥 Stock in — new stock received</h3>
+                    <h3><Icon name="down" size={14} /> Stock in, new stock received</h3>
                     <label className="inv-label">Product</label>
                     <select value={stockInForm.product_id} onChange={(e) => setStockInForm({ ...stockInForm, product_id: e.target.value })}>
                       <option value="">Select product…</option>
@@ -766,10 +879,10 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="card">
-                    <div className="inv-head"><h3>📦 Inventory</h3><div><button className="btn-ghost sm" onClick={() => setStockInForm({ product_id: '', qty: 1, note: '' })}>📥 Stock in</button> <button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div></div>
+                    <div className="inv-head"><h3><Icon name="package" size={14} /> Inventory</h3><div><button className="btn-ghost sm" onClick={() => setStockInForm({ product_id: '', qty: 1, note: '' })}><Icon name="down" size={14} /> Stock in</button> <button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div></div>
                     {products.map((p) => (
                       <div key={p.id} className="inv-row">
-                        <div className="thread-ava">📦</div>
+                        <div className="thread-ava"><Icon name="package" size={14} /></div>
                         <div className="thread-info">
                           <b>{p.name}</b>
                           <span>{p.sku} · {p.category} · alert at {p.low_stock_at}</span>
@@ -777,7 +890,7 @@ export default function App() {
                         <div className="inv-right">
                           <div className="inv-amt">{p.stock} units</div>
                           {p.low && <span className="chip low">low stock</span>}
-                          <button className="btn-ghost sm" onClick={() => openEditProduct(p)}>✏️ Edit</button>
+                          <button className="btn-ghost sm" onClick={() => openEditProduct(p)}><Icon name="pencil" size={14} /> Edit</button>
                         </div>
                       </div>
                     ))}
@@ -785,7 +898,7 @@ export default function App() {
                 ))}
                 {invTab === 'movements' && (
                   <div className="card">
-                    <div className="inv-head"><h3>🔁 Stock movements — last 30 days</h3>
+                    <div className="inv-head"><h3><Icon name="repeat" size={14} /> Stock movements, last 30 days</h3>
                       <div>
                         <button className="btn-ghost sm" onClick={async () => setMovements((await api('/stock/movements?days=30')).rows)}>All</button>
                         <button className="btn-ghost sm" onClick={async () => setMovements((await api('/stock/movements?days=30&direction=in')).rows)}>In only</button>
@@ -795,7 +908,7 @@ export default function App() {
                     {movements.length === 0 && <p className="muted">No movements recorded yet.</p>}
                     {movements.map((m) => (
                       <div key={m.id} className="inv-row">
-                        <div className="thread-ava">{m.direction === 'in' ? '📥' : '📤'}</div>
+                        <div className="thread-ava">{m.direction === 'in' ? <Icon name="down" size={16} /> : <Icon name="up" size={16} />}</div>
                         <div className="thread-info">
                           <b>{m.product_name}</b>
                           <span>{m.direction === 'in' ? '+' : '−'}{m.qty} · {m.reason}{m.ref_type && m.ref_id ? ` · ${m.ref_type} #${m.ref_id}` : ''}{m.note ? ' · ' + m.note : ''}</span>
@@ -807,7 +920,7 @@ export default function App() {
                 )}
                 {invTab === 'digest' && (
                   <div className="card">
-                    <h3>📊 AI Inventory Digest</h3>
+                    <h3><Icon name="chart" size={14} /> AI Inventory Digest</h3>
                     <div className="dept-pills">
                       {[['daily', 'Today'], ['weekly', 'Week'], ['monthly', 'Month'], ['quarterly', 'Quarter'], ['biannual', 'Half-year'], ['year', 'Year-end']].map(([k, label]) => (
                         <button key={k} className={`pill ${digestPeriod === k ? 'active' : ''}`} onClick={async () => { setDigestPeriod(k); setDigest((await api(`/ai/inventory-digest?period=${k}`)).digest); }}>{label}</button>
@@ -820,13 +933,13 @@ export default function App() {
                         <ul className="ads-list">
                           <li>{digest.skus} SKUs tracked · stock value {fmt(digest.stock_value)} (cost)</li>
                           <li>{digest.low_count} low-stock item{digest.low_count === 1 ? '' : 's'} needing reorder</li>
-                          {digest.negatives.length > 0 && <li style={{ color: '#c0392b' }}>⚠️ Negative stock: {digest.negatives.join(', ')}</li>}
+                          {digest.negatives.length > 0 && <li style={{ color: '#c0392b' }}><Icon name="alert" size={14} /> Negative stock: {digest.negatives.join(', ')}</li>}
                         </ul>
-                        {digest.additions.length > 0 && <b style={{ display: 'block', marginTop: 8 }}>📥 Added</b>}
+                        {digest.additions.length > 0 && <b style={{ display: 'block', marginTop: 8 }}><Icon name="down" size={14} /> Added</b>}
                         {digest.additions.map((a, i) => <div key={i} className="inv-line muted"><span>{a.product}</span><span>+{a.qty}</span></div>)}
-                        {digest.sold_items.length > 0 && <b style={{ display: 'block', marginTop: 8 }}>📤 Sold</b>}
+                        {digest.sold_items.length > 0 && <b style={{ display: 'block', marginTop: 8 }}><Icon name="up" size={14} /> Sold</b>}
                         {digest.sold_items.map((s, i) => <div key={i} className="inv-line muted"><span>{s.product}</span><span>−{s.qty}</span></div>)}
-                        {digest.low_items.length > 0 && <b style={{ display: 'block', marginTop: 8 }}>⚠️ Low stock</b>}
+                        {digest.low_items.length > 0 && <b style={{ display: 'block', marginTop: 8 }}><Icon name="alert" size={14} /> Low stock</b>}
                         {digest.low_items.map((l, i) => <div key={i} className="inv-line muted"><span>{l.product}</span><span>{l.stock} left (alert at {l.alert_at})</span></div>)}
                       </div>
                     )}
@@ -837,9 +950,9 @@ export default function App() {
 
             {dept === 'product' && (prodView === 'form' && prodForm ? (
               <div className="card">
-                <h3>{prodForm.id ? '✏️ Edit product' : '➕ Add product'}</h3>
+                <h3>{prodForm.id ? 'Edit product' : 'Add product'}</h3>
                 <label className="inv-label">Product name</label>
-                <input placeholder="e.g. Emulsion Paint — Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
+                <input placeholder="e.g. Emulsion Paint, Ocean Blue 20L" value={prodForm.name} onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
                 <div className="inv-item-row">
                   <div className="inv-field">
                     <label className="inv-label">SKU (stock code)</label>
@@ -873,12 +986,12 @@ export default function App() {
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveProduct}>{prodForm.id ? 'Save changes' : 'Add product'}</button>
                   <button className="btn-ghost" onClick={() => { setProdView('list'); setProdForm(null); }}>Cancel</button>
-                  {prodForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteProduct}>🗑 Delete</button>}
+                  {prodForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteProduct}><Icon name="trash" size={14} /> Delete</button>}
                 </div>
               </div>
             ) : (
               <div className="card">
-                <div className="inv-head"><h3>🏷️ Product Catalog</h3><button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div>
+                <div className="inv-head"><h3><Icon name="tag" size={14} /> Product Catalog</h3><button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div>
                 {products.map((p) => (
                   <div key={p.id} className="prod">
                     <div className="ticket-info"><b>{p.name}</b><span>{p.sku} · {p.category}</span></div>
@@ -887,7 +1000,7 @@ export default function App() {
                       <div><span className="muted">Price</span> {fmt(p.unit_price)}</div>
                       <div><span className="muted">Margin</span> {p.margin}%</div>
                     </div>
-                    <button className="btn-ghost sm" onClick={() => openEditProduct(p)}>✏️</button>
+                    <button className="btn-ghost sm" onClick={() => openEditProduct(p)}><Icon name="pencil" size={14} /></button>
                   </div>
                 ))}
               </div>
@@ -971,7 +1084,7 @@ export default function App() {
 
                   {advForm && (
                     <div className="hr-form">
-                      <h3 style={{ marginTop: 8 }}>➕ Salary advance</h3>
+                      <h3 style={{ marginTop: 8 }}><Icon name="plus" size={14} /> Salary advance</h3>
                       <select value={advForm.staff_id} onChange={(e) => setAdvForm({ ...advForm, staff_id: e.target.value })}>
                         <option value="">Select staff…</option>
                         {hr.staff.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.role}</option>)}
@@ -993,7 +1106,7 @@ export default function App() {
 
                   {leaveForm && (
                     <div className="hr-form">
-                      <h3 style={{ marginTop: 8 }}>➕ Leave request</h3>
+                      <h3 style={{ marginTop: 8 }}><Icon name="plus" size={14} /> Leave request</h3>
                       <select value={leaveForm.staff_id} onChange={(e) => setLeaveForm({ ...leaveForm, staff_id: e.target.value })}>
                         <option value="">Select staff…</option>
                         {hr.staff.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.role}</option>)}
@@ -1033,14 +1146,14 @@ export default function App() {
                         <span className="chip closed">{s.department}</span>
                         <span className="chip draft">{s.onboarding}</span>
                         <div className="inv-amt">{fmt(s.salary)}/mo</div>
-                        <button className="btn-ghost sm" onClick={() => setHrForm({ id: s.id, name: s.name, email: s.email || '', phone: s.phone || '', department: s.department, role: s.role, salary: s.salary, bank: s.bank || '', pension_rate: s.pension_rate, hmo_plan: s.hmo_plan || '', onboarding: s.onboarding, next_of_kin: s.next_of_kin || '', password: '' })}>✏️</button>
+                        <button className="btn-ghost sm" onClick={() => setHrForm({ id: s.id, name: s.name, email: s.email || '', phone: s.phone || '', department: s.department, role: s.role, salary: s.salary, bank: s.bank || '', pension_rate: s.pension_rate, hmo_plan: s.hmo_plan || '', onboarding: s.onboarding, next_of_kin: s.next_of_kin || '', password: '' })}><Icon name="pencil" size={14} /></button>
                       </div>
                     </div>
                   ))}
 
                   {hrTab === 'advances' && hr.advances.map((a) => (
                     <div key={a.id} className="inv-row">
-                      <div className="thread-ava">💸</div>
+                      <div className="thread-ava"><Icon name="banknote" size={14} /></div>
                       <div className="thread-info">
                         <b>{a.name}</b>
                         <span>{a.reason} · {a.requested_at}</span>
@@ -1056,17 +1169,17 @@ export default function App() {
 
                   {hrTab === 'leaves' && hr.leaves.map((l) => (
                     <div key={l.id} className="inv-row">
-                      <div className="thread-ava">🏖</div>
+                      <div className="thread-ava"><Icon name="calendar" size={14} /></div>
                       <div className="thread-info">
-                        <b>{l.name} — {l.type} leave</b>
+                        <b>{l.name}, {l.type} leave</b>
                         <span>{l.start_date} → {l.end_date}</span>
                       </div>
                       <div className="inv-right">
                         <span className={`chip ${l.status === 'pending' ? 'open' : l.status === 'approved' ? 'closed' : 'low'}`}>{l.status}</span>
                         {l.status === 'pending' && (
                           <div className="quick-actions">
-                            <button className="btn-primary sm" onClick={async () => { await api(`/leaves/${l.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setHr(await api('/hr-dashboard')); }}>✓</button>
-                            <button className="btn-ghost sm" onClick={async () => { await api(`/leaves/${l.id}`, { method: 'PUT', body: JSON.stringify({ status: 'rejected' }) }); setHr(await api('/hr-dashboard')); }}>✕</button>
+                            <button className="btn-primary sm" onClick={async () => { await api(`/leaves/${l.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setHr(await api('/hr-dashboard')); }}><Icon name="check" size={14} /></button>
+                            <button className="btn-ghost sm" onClick={async () => { await api(`/leaves/${l.id}`, { method: 'PUT', body: JSON.stringify({ status: 'rejected' }) }); setHr(await api('/hr-dashboard')); }}><Icon name="x" size={14} /></button>
                           </div>
                         )}
                       </div>
@@ -1108,7 +1221,7 @@ export default function App() {
                       {activeRun ? (
                         <>
                           <div className="convo-head" style={{ marginTop: 10 }}>
-                            <button className="btn-ghost" onClick={() => setActiveRun(null)}>←</button>
+                            <button className="btn-ghost" onClick={() => setActiveRun(null)}><Icon name="chevL" size={12} /></button>
                             <div><b>{activeRun.run.period} payroll</b><span className="muted">{activeRun.run.status}</span></div>
                             <span className={`chip ${activeRun.run.status === 'paid' ? 'closed' : activeRun.run.status === 'approved' ? 'pending' : 'draft'}`}>{activeRun.run.status}</span>
                           </div>
@@ -1120,7 +1233,7 @@ export default function App() {
                           </div>
                           {activeRun.payslips.map((p) => (
                             <div key={p.id} className="inv-row">
-                              <div className="thread-ava">🧾</div>
+                              <div className="thread-ava"><Icon name="receipt" size={14} /></div>
                               <div className="thread-info">
                                 <b>{p.name} · {p.role}</b>
                                 <span>{p.department} · net {fmt(p.net)}</span>
@@ -1136,13 +1249,13 @@ export default function App() {
                                   a.href = url; a.download = `Payslip-${p.name}.pdf`;
                                   document.body.appendChild(a); a.click(); a.remove();
                                   URL.revokeObjectURL(url);
-                                }}>⬇ PDF</button>
+                                }}><Icon name="download" size={14} /> PDF</button>
                               </div>
                             </div>
                           ))}
                           <div className="quick-actions">
                             {activeRun.run.status === 'draft' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); }}>Approve payroll</button>}
-                            {activeRun.run.status === 'approved' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); setRemit(await api('/remittances')); }}>Mark as paid ✓</button>}
+                            {activeRun.run.status === 'approved' && <button className="btn-primary" onClick={async () => { const d = await api(`/payroll/runs/${activeRun.run.id}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) }); setActiveRun({ ...activeRun, run: d.run }); setPayrollRuns((await api('/payroll/runs')).runs); setRemit(await api('/remittances')); }}>Mark as paid <Icon name="check" size={14} /></button>}
                             <button className="btn-ghost" onClick={async () => {
                               const res = await fetch(`${API}/payroll/runs/${activeRun.run.id}/journal.csv`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } });
                               const blob = await res.blob();
@@ -1151,15 +1264,15 @@ export default function App() {
                               a.href = url; a.download = `payroll-journal-${activeRun.run.period}.csv`;
                               document.body.appendChild(a); a.click(); a.remove();
                               URL.revokeObjectURL(url);
-                            }}>⬇ Journal CSV (accountant)</button>
+                            }}><Icon name="download" size={14} /> Journal CSV (accountant)</button>
                           </div>
                         </>
                       ) : (
                         <>
-                          {payrollRuns.length === 0 && <p className="muted">No payroll runs yet — run this month's payroll to generate payslips.</p>}
+                          {payrollRuns.length === 0 && <p className="muted">No payroll runs yet, run this month's payroll to generate payslips.</p>}
                           {payrollRuns.map((r) => (
                             <div key={r.id} className="inv-row" onClick={async () => setActiveRun(await api(`/payroll/runs/${r.id}`))}>
-                              <div className="thread-ava">💰</div>
+                              <div className="thread-ava"><Icon name="banknote" size={14} /></div>
                               <div className="thread-info">
                                 <b>{r.period} payroll run</b>
                                 <span>net {fmt(r.total_net)} · created {r.created_at.slice(0, 10)}</span>
@@ -1176,7 +1289,7 @@ export default function App() {
 
                   {hrTab === 'attendance' && (
                     <>
-                      <p className="muted">Today's attendance — staff clock in from their portal or you can do it for them.</p>
+                      <p className="muted">Today's attendance, staff clock in from their portal or you can do it for them.</p>
                       {hr.staff.map((s) => {
                         const row = attendance.find((a) => a.staff_id === s.id);
                         return (
@@ -1205,14 +1318,14 @@ export default function App() {
                       <div className="kpis">
                         <div className="kpi"><div className="label">Pending obligations</div><div className="value">{remit.pending_count}</div></div>
                         <div className="kpi"><div className="label">Pending total</div><div className="value">{fmt(remit.pending_total)}</div></div>
-                        <div className="kpi"><div className="label">Next due</div><div className="value" style={{ fontSize: 16 }}>{remit.next_due ? `${remit.next_due.type.toUpperCase()} · ${remit.next_due.due_date}` : '—'}</div></div>
+                        <div className="kpi"><div className="label">Next due</div><div className="value" style={{ fontSize: 16 }}>{remit.next_due ? `${remit.next_due.type.toUpperCase()} · ${remit.next_due.due_date}` : ', '}</div></div>
                       </div>
                       <p className="muted">Filing calendar: PAYE due by the 10th of the following month · pension (staff 8% + employer 10%) due ~7 days after salary payment.</p>
                       {remit.remittances.map((r) => (
                         <div key={r.id} className="inv-row">
-                          <div className="thread-ava">{r.type === 'paye' ? '🏛' : '🛡'}</div>
+                          <div className="thread-ava">{r.type === 'paye' ? <Icon name="building" size={16} /> : <Icon name="shield" size={16} />}</div>
                           <div className="thread-info">
-                            <b>{r.type.toUpperCase()} — {r.period}</b>
+                            <b>{r.type.toUpperCase()}, {r.period}</b>
                             <span>due {r.due_date}{r.due_date < new Date().toISOString().slice(0, 10) && r.status === 'pending' ? ' · OVERDUE' : ''}</span>
                           </div>
                           <div className="inv-right">
@@ -1230,7 +1343,7 @@ export default function App() {
 
                   {hrTab === 'roster' && (
                     <>
-                      <p className="muted">Next 7 days — pick each staff member's shift.</p>
+                      <p className="muted">Next 7 days, pick each staff member's shift.</p>
                       {[0, 1, 2, 3, 4, 5, 6].map((d) => {
                         const date = new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
                         const label = new Date(Date.now() + d * 864e5).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1249,10 +1362,10 @@ export default function App() {
                                       setShifts((await api('/shifts')).shifts);
                                     }}
                                   >
-                                    <option value="morning">🌅 Morning</option>
-                                    <option value="afternoon">🌤 Afternoon</option>
-                                    <option value="night">🌙 Night</option>
-                                    <option value="off">😴 Off</option>
+                                    <option value="morning"><Icon name="clock" size={14} /> Morning</option>
+                                    <option value="afternoon"><Icon name="clock" size={14} /> Afternoon</option>
+                                    <option value="night"><Icon name="clock" size={14} /> Night</option>
+                                    <option value="off"><Icon name="clock" size={14} /> Off</option>
                                   </select>
                                 </div>
                               );
@@ -1262,24 +1375,24 @@ export default function App() {
                       })}
                     </>
                   )}
-                  {hr.staff.length === 0 && <p className="muted">No staff yet — add your first team member.</p>}
+                  {hr.staff.length === 0 && <p className="muted">No staff yet, add your first team member.</p>}
                 </div>
               </>
             )}
 
             {dept === 'account' && account && (
               <div className="card">
-                <h3>👤 Account</h3>
-                <div className="inv-line"><span>Business</span><span>{account.user.business_name || '—'}</span></div>
+                <h3><Icon name="user" size={14} /> Account</h3>
+                <div className="inv-line"><span>Business</span><span>{account.user.business_name || ', '}</span></div>
                 <div className="inv-line"><span>Owner</span><span>{account.user.name}</span></div>
                 <div className="inv-line"><span>Email</span><span>{account.user.email}</span></div>
                 <div className="inv-line"><span>Plan</span><span className="chip closed">{account.plan}</span></div>
-                <h3 style={{ marginTop: 14 }}>💰 Billing</h3>
+                <h3 style={{ marginTop: 14 }}><Icon name="banknote" size={14} /> Billing</h3>
                 <div className="inv-line"><span>Conversion fees earned</span><span>{fmt(account.billing.fees_earned_ngn)}</span></div>
                 <div className="inv-line"><span>Receivables outstanding</span><span>{fmt(account.billing.receivables_ngn)}</span></div>
                 <div className="inv-line"><span>Paid invoices (all time)</span><span>{fmt(account.billing.paid_total_ngn)}</span></div>
                 <div className="inv-line"><span>Foreign-currency invoices</span><span>{account.billing.foreign_invoices}</span></div>
-                <h3 style={{ marginTop: 14 }}>🔌 Integrations</h3>
+                <h3 style={{ marginTop: 14 }}><Icon name="settings" size={14} /> Integrations</h3>
                 <div className="inv-line">
                   <span>Paystack</span>
                   <span className={`chip ${account.integrations.paystack ? 'closed' : 'draft'}`}>{account.integrations.paystack ? 'live' : 'demo mode'}</span>
@@ -1290,13 +1403,52 @@ export default function App() {
                 </div>
                 <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
                 <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
-                <h3 style={{ marginTop: 14 }}>⚙️ Feature access (who sees what)</h3>
+                {jwtPayload()?.platform && (
+                  <>
+                    <h3 style={{ marginTop: 14 }}><Icon name="shield" size={14} /> Platform console</h3>
+                    <p className="muted">You sit above every organization: enter any org, reset passwords, control features. Every action is logged.</p>
+                    <button className="btn-ghost sm" onClick={async () => setPlatformOrgs((await api('/platform/orgs')).orgs)}><Icon name="refresh" size={13} /> Load organizations</button>
+                    {platformOrgs.map((o) => (
+                      <div key={o.id} className="inv-line" style={{ alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between' }}>
+                          <span><b>{o.business_name || o.email}</b> {o.is_guest ? <span className="chip draft">guest</span> : null}{o.id === jwtPayload()?.id ? <span className="chip closed">you</span> : null}</span>
+                          <span className="muted" style={{ fontSize: 11 }}>{o.staff} staff · {o.contacts} contacts · {o.invoices} invoices</span>
+                        </div>
+                        <div className="quick-actions" style={{ marginTop: 0 }}>
+                          {o.id !== jwtPayload()?.id && (
+                            <button className="btn-ghost sm" onClick={async () => {
+                              if (!window.confirm(`Sign in as ${o.business_name || o.email}? Your session switches to their account (2h). Audit logged.`)) return;
+                              const r = await api('/platform/impersonate', { method: 'POST', body: JSON.stringify({ user_id: o.id }) });
+                              localStorage.setItem(tokenKey, r.token);
+                              location.reload();
+                            }}><Icon name="right" size={13} /> Log in as this org</button>
+                          )}
+                          <button className="btn-ghost sm" onClick={async () => {
+                            const np = window.prompt(`New password for ${o.business_name || o.email} (min 8 chars):`);
+                            if (!np) return;
+                            await api(`/platform/orgs/${o.id}/password`, { method: 'POST', body: JSON.stringify({ new_password: np }) });
+                            alert('Password reset and audit-logged.');
+                          }}><Icon name="settings" size={13} /> Reset password</button>
+                          <button className="btn-ghost sm" onClick={async () => {
+                            const feats = o.features || {};
+                            const all = !Object.values(feats).some((v) => v === false);
+                            const next = {};
+                            for (const k of ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat']) next[k] = !all;
+                            await api(`/platform/orgs/${o.id}/features`, { method: 'PUT', body: JSON.stringify({ features: { ...feats, ...next } }) });
+                            setPlatformOrgs((await api('/platform/orgs')).orgs);
+                          }}><Icon name="trend" size={13} /> {Object.values(o.features || {}).some((v) => v === false) ? 'Enable all features' : 'Disable all features'}</button>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+                <h3 style={{ marginTop: 14 }}><Icon name="settings" size={14} /> Feature access (who sees what)</h3>
                 {isGuest ? (
-                  <p className="muted">Feature access is managed by the organization owner — not available in guest mode.</p>
+                  <p className="muted">Feature access is managed by the organization owner, not available in guest mode.</p>
                 ) : (
                   <>
                 <p className="muted">Switch off any section and it disappears from every staff member's app instantly.</p>
-                {[['customers', '👥 Customers'], ['inbox', '💬 WhatsApp Inbox'], ['invoices', '🧾 Invoicing'], ['followups', '📞 Follow-ups'], ['feedback', '📝 Feedback'], ['reports', '📊 Reports'], ['ads', '📣 Ads Studio'], ['hr', '🧑💼 HR'], ['pipeline', '🔁 Pipeline']].map(([k, label]) => (
+                {[['customers', 'Customers'], ['inbox', 'WhatsApp Inbox'], ['invoices', 'Invoicing'], ['followups', 'Follow-ups'], ['feedback', 'Feedback'], ['reports', 'Reports'], ['ads', 'Ads Studio'], ['hr', 'HR'], ['pipeline', 'Pipeline']].map(([k, label]) => (
                   <div key={k} className="inv-line">
                     <span>{label}</span>
                     <label className="switch">
@@ -1315,8 +1467,8 @@ export default function App() {
                 ))}
                 {hr && (
                   <>
-                    <h3 style={{ marginTop: 14 }}>👥 Staff & departments</h3>
-                    <p className="muted">Assign staff to a department — they only see what that department can access.</p>
+                    <h3 style={{ marginTop: 14 }}><Icon name="users" size={14} /> Staff & departments</h3>
+                    <p className="muted">Assign staff to a department, they only see what that department can access.</p>
                     {hr.staff.map((s) => (
                       <div key={s.id} className="inv-line">
                         <span>{s.name}</span>
@@ -1339,10 +1491,10 @@ export default function App() {
                 )}
                 {!isGuest && (
                   <>
-                <h3 style={{ marginTop: 14 }}>🔗 Demo links (shareable, revocable)</h3>
+                <h3 style={{ marginTop: 14 }}><Icon name="link" size={14} /> Demo links (shareable, revocable)</h3>
                 <p className="muted">Create a link to share with anyone. Revoke it and it instantly stops working for them.</p>
                 <button className="btn-primary sm" onClick={async () => {
-                  const label = prompt('Label for this link? (e.g. "Investor pitch", "Kunle — Tue demo")') || '';
+                  const label = prompt('Label for this link? (e.g. "Investor pitch", "Kunle, Tue demo")') || '';
                   const d = await api('/demo-links', { method: 'POST', body: JSON.stringify({ label }) });
                   setDemoLinks((await api('/demo-links')).links);
                   const full = `${location.origin}${d.url}`;
@@ -1380,7 +1532,7 @@ export default function App() {
 
         {view === 'customers' && (custView === 'form' && custForm ? (
           <div className="card">
-            <h3>{custForm.id ? '✏️ Edit customer' : '➕ Add customer'}</h3>
+            <h3>{custForm.id ? 'Edit customer' : 'Add customer'}</h3>
             <div className="inv-item-row">
               <div className="inv-field">
                 <label className="inv-label">Contact name</label>
@@ -1441,7 +1593,7 @@ export default function App() {
             <div className="quick-actions">
               <button className="btn-primary" onClick={saveCustomer}>{custForm.id ? 'Save changes' : 'Add customer'}</button>
               <button className="btn-ghost" onClick={() => { setCustView('list'); setCustForm(null); }}>Cancel</button>
-              {custForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteCustomer}>🗑 Delete</button>}
+              {custForm.id && <button className="btn-ghost" style={{ color: '#c0392b' }} onClick={deleteCustomer}><Icon name="trash" size={14} /> Delete</button>}
             </div>
           </div>
         ) : (
@@ -1457,7 +1609,7 @@ export default function App() {
                 <div className="inv-right">
                   {c.deal_value_ngn > 0 && <div className="amt">{fmt(c.deal_value_ngn)}</div>}
                   {c.debt_ngn > 0 && <div className="debt">{fmt(c.debt_ngn)}</div>}
-                  <button className="btn-ghost sm" onClick={() => openEditCustomer(c)}>✏️ Edit</button>
+                  <button className="btn-ghost sm" onClick={() => openEditCustomer(c)}><Icon name="pencil" size={14} /> Edit</button>
                 </div>
               </div>
             ))}
@@ -1468,7 +1620,7 @@ export default function App() {
           <div className="card inbox">
             {!activeContact ? (
               <>
-                <h3>💬 WhatsApp Inbox</h3>
+                <h3><Icon name="chat" size={14} /> WhatsApp Inbox</h3>
                 {threads.length === 0 && <p className="muted">No conversations yet.</p>}
                 {threads.map((t) => (
                   <div key={t.contact_id} className="thread" onClick={() => openThread(t)}>
@@ -1484,7 +1636,7 @@ export default function App() {
             ) : (
               <div className="convo">
                 <div className="convo-head">
-                  <button className="btn-ghost" onClick={backToThreads}>←</button>
+                  <button className="btn-ghost" onClick={backToThreads}><Icon name="chevL" size={12} /></button>
                   <div className="thread-ava">{((activeContact.company || activeContact.name) || '?')[0]}</div>
                   <div><b>{activeContact.company || activeContact.name}</b><span className="muted">{activeContact.phone || 'WhatsApp'}</span></div>
                 </div>
@@ -1494,7 +1646,7 @@ export default function App() {
                   ))}
                   {draft && (
                     <div className="bubble draft">
-                      <b>✦ AI DRAFT — approve to send</b>
+                      <b><Icon name="sparkles" size={14} /> AI DRAFT, approve to send</b>
                       {draft}
                       <div className="draft-acts">
                         <button className="btn-primary sm" onClick={sendMsg}>Approve & Send</button>
@@ -1504,9 +1656,9 @@ export default function App() {
                   )}
                 </div>
                 <div className="composer">
-                  {!isGuest && <button className="btn-ghost sm" onClick={getDraft}>✦ AI Draft</button>}
+                  {!isGuest && <button className="btn-ghost sm" onClick={getDraft}><Icon name="sparkles" size={14} /> AI Draft</button>}
                   <input
-                    placeholder={isGuest ? 'Read-only guest mode — sending is disabled' : 'Type a message…'}
+                    placeholder={isGuest ? 'Read-only guest mode, sending is disabled' : 'Type a message…'}
                     value={composer}
                     onChange={(e) => setComposer(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') sendMsg(); }}
@@ -1522,7 +1674,7 @@ export default function App() {
         {view === 'orders' && (
           <div className="card">
             <div className="inv-head">
-              <h3>📦 Orders{opsMode ? '' : ' — yours'}</h3>
+              <h3><Icon name="package" size={14} /> Orders{opsMode ? '' : ', yours'}</h3>
               {!isGuest && <button className="btn-primary sm" onClick={() => setOrderForm({ contact_id: '', kind: 'catalog', items: [{ product_id: '', qty: 1 }], note: '', payment_terms: '' })}>+ Raise order</button>}
             </div>
             {orderForm && (
@@ -1553,7 +1705,7 @@ export default function App() {
                           <label className="inv-label">Product</label>
                           <select value={it.product_id} onChange={(e) => setOrderForm({ ...orderForm, items: orderForm.items.map((x, j) => j === i ? { ...x, product_id: e.target.value } : x) })}>
                             <option value="">Select product…</option>
-                            {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.category ? ' · ' + p.category : ''}{p.sku ? ' (' + p.sku + ')' : ''} — ₦{p.unit_price}</option>)}
+                            {products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.category ? ' · ' + p.category : ''}{p.sku ? ' (' + p.sku + ')' : ''}, ₦{p.unit_price}</option>)}
                           </select>
                         </div>
                         <div className="inv-field" style={{ flex: '0 0 96px' }}>
@@ -1607,11 +1759,11 @@ export default function App() {
             )}
             {orders.map((o) => (
               <div key={o.id} className="inv-row">
-                <div className="thread-ava">{'📦'}</div>
+                <div className="thread-ava"><Icon name="package" size={16} /></div>
                 <div style={{ flex: 1 }}>
-                  <div><b>Order #{o.id}</b> — {o.contact_name} {o.rep_name && <span className="muted">(rep: {o.rep_name})</span>}</div>
+                  <div><b>Order #{o.id}</b>, {o.contact_name} {o.rep_name && <span className="muted">(rep: {o.rep_name})</span>}</div>
                   <div className="muted" style={{ fontSize: 13 }}>
-                    {o.total_ngn.toLocaleString()} naira · {JSON.parse(o.items_json || '[]').map((x) => `${x.name} ×${x.qty}`).join(', ') || '—'}
+                    {o.total_ngn.toLocaleString()} naira · {JSON.parse(o.items_json || '[]').map((x) => `${x.name} ×${x.qty}`).join(', ') || ', '}
                     {o.invoice_id && <> · <b>Invoice #{o.invoice_id}</b></>}
                     {o.payment_ref && <> · ref {o.payment_ref}</>}
                   </div>
@@ -1619,15 +1771,26 @@ export default function App() {
                 <span className={`inv-tag ${o.status}`}>{o.status}</span>
                 {opsMode && (
                   <div className="inv-actions-grid" style={{ marginTop: 0 }}>
-                    {o.status === 'pending' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/approve`, { method: 'POST' }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span>✅</span>Approve</button>}
-                    {o.status === 'pending' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/reject`, { method: 'POST' }); setOrders((await api('/orders')).rows); }}><span>✕</span>Reject</button>}
-                    {o.status === 'approved' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/deliver`, { method: 'POST' }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span>🚚</span>Delivered</button>}
-                    {o.status === 'delivered' && <button className="act-btn" onClick={async () => { const ref = prompt('Payment reference (optional)') || null; await api(`/orders/${o.id}/payment`, { method: 'POST', body: JSON.stringify({ ref }) }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span>💰</span>Post payment</button>}
+                    {o.status === 'pending' && <button className="act-btn" onClick={async () => {
+                      let finalPrice = null;
+                      if (o.kind === 'custom') {
+                        const entered = window.prompt(`Approve custom order #${o.id}. Set the final price (₦):`, o.total_ngn || 0);
+                        if (entered === null) return;
+                        const v = Number(entered);
+                        if (!(v > 0)) { alert('Enter a valid price'); return; }
+                        finalPrice = v;
+                      }
+                      await api(`/orders/${o.id}/approve`, { method: 'POST', body: JSON.stringify(finalPrice ? { final_total_ngn: finalPrice } : {}) });
+                      setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows);
+                    }}><span><Icon name="check" size={14} /></span>Approve</button>}
+                    {o.status === 'pending' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/reject`, { method: 'POST' }); setOrders((await api('/orders')).rows); }}><span><Icon name="x" size={12} /></span>Reject</button>}
+                    {o.status === 'approved' && <button className="act-btn" onClick={async () => { await api(`/orders/${o.id}/deliver`, { method: 'POST' }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span><Icon name="truck" size={14} /></span>Delivered</button>}
+                    {o.status === 'delivered' && <button className="act-btn" onClick={async () => { const ref = prompt('Payment reference (optional)') || null; await api(`/orders/${o.id}/payment`, { method: 'POST', body: JSON.stringify({ ref }) }); setOrders((await api('/orders')).rows); setNotifs((await api('/notifications')).rows); }}><span><Icon name="banknote" size={14} /></span>Post payment</button>}
                   </div>
                 )}
               </div>
             ))}
-            {orders.length === 0 && <p className="muted">No orders yet — raise one above and watch it move through approval → invoice → delivery → payment.</p>}
+            {orders.length === 0 && <p className="muted">No orders yet, raise one above and watch it move through approval → invoice → delivery → payment.</p>}
           </div>
         )}
 
@@ -1635,23 +1798,23 @@ export default function App() {
           <div className="chat-shell">
             <div className="chat-sidebar">
               <div className="inv-head" style={{ padding: '10px 12px' }}>
-                <h3 style={{ margin: 0 }}>💬 Team Chat</h3>
+                <h3 style={{ margin: 0 }}><Icon name="chat" size={14} /> Team Chat</h3>
                 <button className="btn-primary sm" onClick={() => setDmPickerOpen(!dmPickerOpen)}>+ New</button>
               </div>
               {dmPickerOpen && (
                 <div className="dm-picker">
                   <div className="mention-head">Start a conversation</div>
                   <div className="mention-item" onClick={() => { setDmPickerOpen(false); setChannelPickerOpen(true); }}>
-                    👤 New chat <span className="muted">— message one person</span>
+                    <Icon name="user" size={14} /> New chat <span className="muted">, message one person</span>
                   </div>
                   <div className="mention-item" onClick={() => { setDmPickerOpen(false); setNewChannelOpen(true); }}>
-                    # New channel <span className="muted">— group chat</span>
+                    # New channel <span className="muted">, group chat</span>
                   </div>
                 </div>
               )}
               {channelPickerOpen && (
                 <div className="dm-picker">
-                  <div className="mention-head">New chat — pick a teammate</div>
+                  <div className="mention-head">New chat, pick a teammate</div>
                   {chatStaff.filter((s) => s.id !== jwtPayload()?.staff_id).map((s) => (
                     <div key={s.id} className="mention-item" onClick={async () => {
                       const r = await api('/chat/conversations', { method: 'POST', body: JSON.stringify({ kind: 'dm', with_staff_id: s.id }) });
@@ -1689,22 +1852,34 @@ export default function App() {
               )}
               <div className="chat-section-head">Channels</div>
               {chatConvs.filter((c) => c.kind === 'group').map((c) => (
-                <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => setActiveConv(await api(`/chat/conversations/${c.id}`))}>
+                <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => {
+                  const fresh = await api(`/chat/conversations/${c.id}`);
+                  setActiveConv(fresh);
+                  const last = fresh.messages.length ? fresh.messages[fresh.messages.length - 1].id : 0;
+                  if (last) markConvSeen(c.id, last);
+                }}>
                   <div className="thread-ava">#</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <b>{c.title || 'Channel'}{c.dept && <span className="muted" style={{ fontSize: 11 }}> · {c.members.length} members</span>}</b>
                     {c.last && <div className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.last.sender_name ? c.last.sender_name.split(' ')[0] + ': ' : ''}{c.last.body}</div>}
                   </div>
+                  {chatUnread[c.id] > 0 && <b className="unread-badge">{chatUnread[c.id]}</b>}
                 </div>
               ))}
               <div className="chat-section-head">Direct messages</div>
               {chatConvs.filter((c) => c.kind === 'dm').map((c) => (
-                <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => setActiveConv(await api(`/chat/conversations/${c.id}`))}>
-                  <div className="thread-ava">{c.title ? c.title.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() : '👤'}</div>
+                <div key={c.id} className={`chat-item ${activeConv?.conversation?.id === c.id ? 'active' : ''}`} onClick={async () => {
+                  const fresh = await api(`/chat/conversations/${c.id}`);
+                  setActiveConv(fresh);
+                  const last = fresh.messages.length ? fresh.messages[fresh.messages.length - 1].id : 0;
+                  if (last) markConvSeen(c.id, last);
+                }}>
+                  <div className="thread-ava">{c.title ? c.title.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() : <Icon name="user" size={16} />}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <b>{c.title || 'Direct message'}</b>
                     {c.last && <div className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.last.sender_name ? c.last.sender_name.split(' ')[0] + ': ' : ''}{c.last.body}</div>}
                   </div>
+                  {chatUnread[c.id] > 0 && <b className="unread-badge">{chatUnread[c.id]}</b>}
                 </div>
               ))}
               <div className="chat-section-head">Contacts</div>
@@ -1712,7 +1887,10 @@ export default function App() {
                 <div key={s.id} className="chat-item" onClick={async () => {
                   const r = await api('/chat/conversations', { method: 'POST', body: JSON.stringify({ kind: 'dm', with_staff_id: s.id }) });
                   setChatConvs((await api('/chat/conversations')).conversations);
-                  setActiveConv(await api(`/chat/conversations/${r.id}`));
+                  const fresh = await api(`/chat/conversations/${r.id}`);
+                  setActiveConv(fresh);
+                  const last = fresh.messages.length ? fresh.messages[fresh.messages.length - 1].id : 0;
+                  if (last) markConvSeen(r.id, last);
                 }}>
                   <div className="thread-ava">{s.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -1726,7 +1904,7 @@ export default function App() {
               {activeConv ? (
                 <>
                   <div className="chat-header">
-                    <b>{activeConv.conversation.kind === 'dm' ? '👤 ' + activeConv.conversation.title : '# ' + (activeConv.conversation.title || 'Channel')}</b>
+                    <b>{activeConv.conversation.kind === 'dm' ? <><Icon name="user" size={14} /> {activeConv.conversation.title}</> : <># {activeConv.conversation.title || 'Channel'}</>}</b>
                     {activeConv.conversation.kind === 'group' && <span className="muted">{activeConv.conversation.members.length} members</span>}
                   </div>
                   <div className="chat-messages">
@@ -1742,7 +1920,7 @@ export default function App() {
                         </div>
                       );
                     })}
-                    {activeConv.messages.length === 0 && <p className="muted" style={{ padding: 16 }}>No messages yet — say hello 👋</p>}
+                    {activeConv.messages.length === 0 && <p className="muted" style={{ padding: 16 }}>No messages yet, say hello</p>}
                   </div>
                   <div className="chat-composer">
                     <div style={{ position: 'relative', flex: 1 }}>
@@ -1765,7 +1943,7 @@ export default function App() {
                           <div className="mention-head">Tap to mention</div>
                           {['sales', 'support', 'inventory', 'hr', 'account'].map((g) => (
                             <div key={g} className="mention-item" onClick={() => { setChatGroups([...new Set([...chatGroups, g])]); setChatMentionOpen(false); setChatDraft((d) => d.replace(/@$/, '') + '@' + g + ' '); }}>
-                              👥 @{g} (whole team)
+                              <Icon name="users" size={13} /> @{g} (whole team)
                             </div>
                           ))}
                           {chatStaff.map((s) => (
@@ -1787,7 +1965,7 @@ export default function App() {
                 </>
               ) : (
                 <div className="chat-empty">
-                  <div style={{ fontSize: 40 }}>💬</div>
+                  <div style={{ fontSize: 40 }}><Icon name="chat" size={14} /></div>
                   <p className="muted">Select a conversation, or hit + New to DM a teammate.</p>
                 </div>
               )}
@@ -1800,9 +1978,9 @@ export default function App() {
             {invView === 'list' && (
               <>
                 <div className="inv-head">
-                  <h3>🧾 Invoicing</h3>
+                  <h3><Icon name="receipt" size={14} /> Invoicing</h3>
                   {!isGuest && opsMode && <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>}
-                  {!opsMode && <span className="muted" style={{ fontSize: 12 }}>Invoices are raised by admin/accounts — you raise orders.</span>}
+                  {!opsMode && <span className="muted" style={{ fontSize: 12 }}>Invoices are raised by admin/accounts, you raise orders.</span>}
                 </div>
                 <div className="kpis">
                   <div className="kpi"><div className="label">Receivables</div><div className="value">{fmt(receivables)}</div></div>
@@ -1812,7 +1990,7 @@ export default function App() {
                 </div>
                 {invoices.map((i) => (
                   <div key={i.id} className="inv-row" onClick={() => openInvoice(i)}>
-                    <div className="thread-ava">🧾</div>
+                    <div className="thread-ava"><Icon name="receipt" size={14} /></div>
                     <div className="thread-info">
                       <b>{i.company || i.name}</b>
                       <span>{i.number} · due {i.due_date}{i.currency !== 'NGN' ? ` · ${i.currency}` : ''}</span>
@@ -1844,7 +2022,7 @@ export default function App() {
                   <option value="GBP">£ British Pound (GBP)</option>
                 </select>
                 {fx && newInv.currency !== 'NGN' && (
-                  <p className="muted fx-hint">1 {newInv.currency} ≈ {fmt(fx.rates[newInv.currency])} · {fx.source === 'live' ? 'live rate' : 'offline rate'} — books stay in naira automatically</p>
+                  <p className="muted fx-hint">1 {newInv.currency} ≈ {fmt(fx.rates[newInv.currency])} · {fx.source === 'live' ? 'live rate' : 'offline rate'}, books stay in naira automatically</p>
                 )}
                 <label className="inv-label">Items</label>
                 {newInv.items.map((it, idx) => (
@@ -1889,7 +2067,7 @@ export default function App() {
 
             {invView === 'detail' && activeInv && (invEdit ? (
               <div>
-                <h3>✏️ Edit draft invoice {activeInv.number}</h3>
+                <h3><Icon name="pencil" size={14} /> Edit draft invoice {activeInv.number}</h3>
                 <label className="inv-label">Due date</label>
                 <input type="date" value={invEdit.due_date} onChange={(e) => setInvEdit({ ...invEdit, due_date: e.target.value })} />
                 <label className="inv-label">Currency</label>
@@ -1941,7 +2119,7 @@ export default function App() {
             ) : (
               <>
                 <div className="convo-head">
-                  <button className="btn-ghost" onClick={() => setInvView('list')}>←</button>
+                  <button className="btn-ghost" onClick={() => setInvView('list')}><Icon name="chevL" size={12} /></button>
                   <div><b>{activeInv.number}</b><span className="muted">{activeInv.company || activeInv.name} · issued {activeInv.issue_date} · due {activeInv.due_date}</span></div>
                   <span className={`chip ${activeInv.status}`}>{activeInv.status}</span>
                 </div>
@@ -1964,17 +2142,17 @@ export default function App() {
                 </div>
                 <div className="inv-actions">
                   {!isGuest && opsMode && activeInv.status === 'draft' && <button className="btn-primary act-primary" onClick={sendInvoice}>Mark as sent</button>}
-                  {!isGuest && opsMode && (activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid ✓</button>}
+                  {!isGuest && opsMode && (activeInv.status === 'sent' || activeInv.status === 'overdue') && <button className="btn-primary act-primary" onClick={payInvoice}>Mark as paid <Icon name="check" size={14} /></button>}
                   <div className="inv-actions-grid">
                     {!isGuest && opsMode && activeInv.status !== 'paid' && (
                       <>
-                        <button className="act-btn" onClick={shareWhatsApp}><span>💬</span>WhatsApp</button>
-                        <button className="act-btn" onClick={copyPayLink}><span>🔗</span>Copy link</button>
+                        <button className="act-btn" onClick={shareWhatsApp}><span><Icon name="chat" size={14} /></span>WhatsApp</button>
+                        <button className="act-btn" onClick={copyPayLink}><span><Icon name="link" size={14} /></span>Copy link</button>
                       </>
                     )}
                     <button className="act-btn" onClick={downloadPdf}><span>⬇️</span>PDF</button>
                     <button className="act-btn" onClick={emailInvoice}><span>✉️</span>Email</button>
-                    {!isGuest && opsMode && activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span>✏️</span>Edit</button>}
+                    {!isGuest && opsMode && activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span><Icon name="pencil" size={14} /></span>Edit</button>}
                   </div>
                 </div>
               </>
@@ -1988,7 +2166,7 @@ export default function App() {
             {followups.length === 0 && <p className="muted">Nothing due today. 🎉</p>}
             {followups.map((f) => (
               <div key={f.contact_id} className="followup">
-                <b>{f.company || f.name}</b> — {f.reason}
+                <b>{f.company || f.name}</b>, {f.reason}
                 <p>{f.draft}</p>
               </div>
             ))}
@@ -1997,8 +2175,8 @@ export default function App() {
 
         {view === 'feedback' && (
           <div className="card">
-            <div className="inv-head"><h3>📝 Conversation Feedback</h3>{!isGuest && <button className="btn-primary sm" onClick={() => setFbOpen(!fbOpen)}>+ Add feedback</button>}</div>
-            <p className="muted">Capture what customers said on calls and visits — the AI reports use it.</p>
+            <div className="inv-head"><h3><Icon name="file" size={14} /> Conversation Feedback</h3>{!isGuest && <button className="btn-primary sm" onClick={() => setFbOpen(!fbOpen)}>+ Add feedback</button>}</div>
+            <p className="muted">Capture what customers said on calls and visits, the AI reports use it.</p>
             {fbOpen && (
               <>
                 <label className="inv-label">Customer (optional)</label>
@@ -2008,7 +2186,7 @@ export default function App() {
                 </select>
                 <textarea
                   className="fb-area"
-                  placeholder="e.g. Called GPFI procurement — they said management is reviewing the proposal this week…"
+                  placeholder="e.g. Called GPFI procurement, they said management is reviewing the proposal this week…"
                   value={fbForm.body}
                   onChange={(e) => setFbForm({ ...fbForm, body: e.target.value })}
                 />
@@ -2023,7 +2201,7 @@ export default function App() {
                 <b>{f.company || f.name || 'General'}</b>
                 <p>{f.body}</p>
                 <div className="quick-actions">
-                  <button className="btn-ghost sm" onClick={() => deleteFeedback(f.id)}>🗑</button>
+                  <button className="btn-ghost sm" onClick={() => deleteFeedback(f.id)}><Icon name="trash" size={14} /></button>
                 </div>
               </div>
             ))}
@@ -2032,7 +2210,7 @@ export default function App() {
 
         {view === 'reports' && (
           <div className="card">
-            <h3>📊 AI Activity Report</h3>
+            <h3><Icon name="chart" size={14} /> AI Activity Report</h3>
             <div className="dept-pills">
               {[['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['biannual', 'Biannual'], ['year', 'Year-end']].map(([k, label]) => (
                 <button key={k} className={`pill ${reportPeriod === k ? 'active' : ''}`} onClick={() => { setReportPeriod(k); setReport(null); }}>
@@ -2067,13 +2245,63 @@ export default function App() {
           </div>
         )}
 
+        {view === 'wallet' && (
+          <div className="card">
+            <div className="inv-head">
+              <h3><Icon name="wallet" size={16} /> Wallet</h3>
+              {walletData?.demo && <span className="chip draft">demo mode</span>}
+            </div>
+            <div className="kpis">
+              <div className="kpi"><div className="label">Balance</div><div className="value">{fmt(walletData?.wallet?.balance_ngn || 0)}</div></div>
+            </div>
+            <div className="quick-actions" style={{ marginTop: 0 }}>
+              {!isGuest && (
+                <>
+                  <button className="btn-primary sm" onClick={async () => {
+                    const amt = window.prompt('Top-up amount (₦):');
+                    if (!amt || !(Number(amt) > 0)) return;
+                    await api('/wallet/topup', { method: 'POST', body: JSON.stringify({ amount_ngn: Number(amt), note: 'Top-up' }) });
+                    setWalletData(await api('/wallet'));
+                  }}><Icon name="down" size={13} /> Add money</button>
+                  <button className="btn-ghost sm" onClick={async () => {
+                    const amt = window.prompt('Payout amount (₦):');
+                    if (!amt || !(Number(amt) > 0)) return;
+                    const dest = window.prompt('Destination (bank / account):') || '';
+                    try {
+                      await api('/wallet/payout', { method: 'POST', body: JSON.stringify({ amount_ngn: Number(amt), destination: dest, note: 'Payout' }) });
+                      setWalletData(await api('/wallet'));
+                    } catch (e) { alert(e.message || 'Payout failed'); }
+                  }}><Icon name="up" size={13} /> Send money out</button>
+                </>
+              )}
+            </div>
+            <h3 style={{ marginTop: 16 }}>Transactions</h3>
+            {(walletData?.transactions || []).map((t) => (
+              <div key={t.id} className="inv-row">
+                <div className="thread-ava" style={{ background: t.direction === 'in' ? 'linear-gradient(135deg, #0b8f5c, #12b57b)' : 'linear-gradient(135deg, #8a5a44, #b06f52)' }}>
+                  <Icon name={t.direction === 'in' ? 'down' : 'up'} size={15} />
+                </div>
+                <div className="thread-info">
+                  <b>{t.kind === 'payment' ? 'Customer payment' : t.kind === 'topup' ? 'Top-up' : t.kind === 'payout' ? 'Payout' : 'Adjustment'}</b>
+                  <span>{t.note}{t.ref_type && t.ref_id ? ` · ${t.ref_type} #${t.ref_id}` : ''} · {(t.created_at || '').slice(0, 16)}{t.by_name ? ' · ' + t.by_name : ''}</span>
+                </div>
+                <div className="inv-right">
+                  <div className="inv-amt" style={{ color: t.direction === 'in' ? '#0b8f5c' : '#c0392b' }}>{t.direction === 'in' ? '+' : '−'}{fmt(t.amount_ngn)}</div>
+                  {t.status === 'requested' && <span className="chip pending">requested</span>}
+                </div>
+              </div>
+            ))}
+            {(walletData?.transactions || []).length === 0 && <p className="muted">No money has moved yet. Customer payments land here automatically.</p>}
+          </div>
+        )}
+
         {view === 'portal' && portal && (
           <div className="card">
-            <h3>👤 My Portal — {portal.staff.name}</h3>
+            <h3><Icon name="user" size={14} /> My Portal, {portal.staff.name}</h3>
             <div className="inv-line"><span>Role</span><span>{portal.staff.role} · {portal.staff.department}</span></div>
             <div className="inv-line"><span>Salary</span><span>{fmt(portal.staff.salary)}/mo</span></div>
-            <div className="inv-line"><span>HMO</span><span>{portal.staff.hmo_plan || '—'}</span></div>
-            <div className="inv-line"><span>Bank</span><span>{portal.staff.bank || '—'}</span></div>
+            <div className="inv-line"><span>HMO</span><span>{portal.staff.hmo_plan || ', '}</span></div>
+            <div className="inv-line"><span>Bank</span><span>{portal.staff.bank || ', '}</span></div>
 
             <h3 style={{ marginTop: 14 }}>⏰ Attendance today</h3>
             {portal.today_attendance[0]?.clock_in ? (
@@ -2086,15 +2314,15 @@ export default function App() {
               {!portal.today_attendance[0]?.clock_in ? (
                 <button className="btn-primary" onClick={async () => { await api('/attendance/clock-in', { method: 'POST', body: '{}' }); setPortal(await api('/me/portal')); }}>⏰ Clock in</button>
               ) : !portal.today_attendance[0].clock_out ? (
-                <button className="btn-primary" onClick={async () => { await api('/attendance/clock-out', { method: 'POST', body: '{}' }); setPortal(await api('/me/portal')); }}>🏁 Clock out</button>
+                <button className="btn-primary" onClick={async () => { await api('/attendance/clock-out', { method: 'POST', body: '{}' }); setPortal(await api('/me/portal')); }}><Icon name="clock" size={14} /> Clock out</button>
               ) : null}
             </div>
 
-            <h3 style={{ marginTop: 14 }}>🧾 My payslips</h3>
+            <h3 style={{ marginTop: 14 }}><Icon name="receipt" size={14} /> My payslips</h3>
             {portal.payslips.length === 0 && <p className="muted">No payslips yet.</p>}
             {portal.payslips.map((p) => (
               <div key={p.id} className="inv-row">
-                <div className="thread-ava">🧾</div>
+                <div className="thread-ava"><Icon name="receipt" size={14} /></div>
                 <div className="thread-info">
                   <b>{p.period} payslip</b>
                   <span>gross {fmt(p.gross)}{p.commission > 0 ? ` + commission ${fmt(p.commission)}` : ''} · pension −{fmt(p.pension)} · PAYE −{fmt(p.paye)}</span>
@@ -2109,16 +2337,16 @@ export default function App() {
                     a.href = url; a.download = `Payslip-${p.period}.pdf`;
                     document.body.appendChild(a); a.click(); a.remove();
                     URL.revokeObjectURL(url);
-                  }}>⬇ PDF</button>
+                  }}><Icon name="download" size={14} /> PDF</button>
                 </div>
               </div>
             ))}
 
-            <h3 style={{ marginTop: 14 }}>💸 My salary advances</h3>
+            <h3 style={{ marginTop: 14 }}><Icon name="banknote" size={14} /> My salary advances</h3>
             {portal.advances.length === 0 && <p className="muted">No advances requested.</p>}
             {portal.advances.map((a) => (
               <div key={a.id} className="inv-line">
-                <span>{fmt(a.amount)} — {a.reason}</span>
+                <span>{fmt(a.amount)}, {a.reason}</span>
                 <span className={`chip ${a.status === 'pending' ? 'open' : a.status === 'approved' ? 'pending' : 'closed'}`}>{a.status}</span>
               </div>
             ))}
@@ -2132,7 +2360,7 @@ export default function App() {
               }}>Request advance</button>
             </div>
 
-            <h3 style={{ marginTop: 14 }}>🏖 My leave</h3>
+            <h3 style={{ marginTop: 14 }}><Icon name="calendar" size={14} /> My leave</h3>
             {portal.leaves.length === 0 && <p className="muted">No leave requested.</p>}
             {portal.leaves.map((l) => (
               <div key={l.id} className="inv-line">
@@ -2150,7 +2378,7 @@ export default function App() {
               }}>Request leave</button>
             </div>
 
-            <h3 style={{ marginTop: 14 }}>📅 My shifts (next 7 days)</h3>
+            <h3 style={{ marginTop: 14 }}><Icon name="calendar" size={14} /> My shifts (next 7 days)</h3>
             {portalShifts.length === 0 && <p className="muted">No shifts assigned yet.</p>}
             {portalShifts.map((sh) => (
               <div key={sh.id} className="inv-line">
@@ -2159,7 +2387,7 @@ export default function App() {
               </div>
             ))}
 
-            <h3 style={{ marginTop: 14 }}>💵 My commissions</h3>
+            <h3 style={{ marginTop: 14 }}><Icon name="banknote" size={14} /> My commissions</h3>
             {commissions.filter((c) => c.staff_id === jwtPayload()?.staff_id).map((c) => (
               <div key={c.staff_id}>
                 <div className="inv-line"><span>Rate</span><span>{c.rate}%</span></div>
@@ -2167,48 +2395,25 @@ export default function App() {
                 <div className="inv-line"><span>All-time commission</span><span>{fmt(c.all_time.commission)}</span></div>
               </div>
             ))}
-            {commissions.filter((c) => c.staff_id === jwtPayload()?.staff_id).length === 0 && <p className="muted">No commission data yet — your rate is set by HR.</p>}
+            {commissions.filter((c) => c.staff_id === jwtPayload()?.staff_id).length === 0 && <p className="muted">No commission data yet, your rate is set by HR.</p>}
           </div>
         )}
 
         {view === 'ads' && (
           <div className="card ads-card">
             <div className="ads-badge">COMING SOON</div>
-            <h3>📣 Ads Studio</h3>
-            <p className="muted">Run Meta & Google ads the easy way — the AI plans, builds and optimises while you watch the returns.</p>
+            <h3><Icon name="megaphone" size={14} /> Ads Studio</h3>
+            <p className="muted">Run Meta & Google ads the easy way, the AI plans, builds and optimises while you watch the returns.</p>
             <ul className="ads-list">
-              <li>✨ AI builds your ad copy, creative and audience — you just approve</li>
-              <li>💳 One naira budget, all-in — our fee is a simple % of your ad spend</li>
-              <li>📊 Live analytics: spend, clicks, leads and ROI on every naira</li>
-              <li>🤖 Weekly AI recommendations that shift budget to what sells</li>
+              <li><Icon name="sparkles" size={14} /> AI builds your ad copy, creative and audience, you just approve</li>
+              <li><Icon name="card" size={14} /> One naira budget, all-in, our fee is a simple % of your ad spend</li>
+              <li><Icon name="chart" size={14} /> Live analytics: spend, clicks, leads and ROI on every naira</li>
+              <li><Icon name="sparkles" size={14} /> Weekly AI recommendations that shift budget to what sells</li>
             </ul>
-            <button className="btn-primary" onClick={() => alert('Ads Studio is coming in the next build phase. You are first in line, Grant! 🚀')}>Join the waitlist</button>
+            <button className="btn-primary" onClick={() => alert('Ads Studio is coming in the next build phase. You are first in line, Grant!')}>Join the waitlist</button>
           </div>
         )}
       </main>
-
-      <nav className="bottomnav">
-        {nav.filter(([k]) => ['dashboard', 'customers', 'inbox', 'invoices', 'orders'].includes(k) && allowed(k)).map(([k, icon, label]) => (
-          <div key={k} className={`bn-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
-            <span>{icon}</span>{label}
-          </div>
-        ))}
-        <div className={`bn-item ${moreOpen ? 'active' : ''}`} onClick={() => setMoreOpen(!moreOpen)}>
-          <span>{moreOpen ? '✕' : '⋯'}</span>More
-        </div>
-      </nav>
-      {moreOpen && (
-        <div className="more-sheet" onClick={() => setMoreOpen(false)}>
-          <div className="more-sheet-card" onClick={(e) => e.stopPropagation()}>
-            <b className="muted">More</b>
-            {nav.filter(([k]) => !['dashboard', 'customers', 'inbox', 'invoices'].includes(k) && allowed(k)).map(([k, icon, label]) => (
-              <div key={k} className={`bn-item more-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setMoreOpen(false); }}>
-                <span>{icon}</span>{label}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2229,17 +2434,17 @@ function ReceiptThumb({ id, small }) {
 
 function Landing({ onLogin, onStart }) {
   const features = [
-    ['📈', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
-    ['💬', 'WhatsApp AI Inbox', 'One inbox for every customer chat — the AI drafts, you approve and send.'],
-    ['📦', 'Inventory', 'Stock levels, low-stock alerts and stock value, updated in real time.'],
-    ['🧾', 'Invoicing', 'Send invoices from your phone, track payments, chase debtors politely.'],
-    ['📣', 'Ads Studio', 'AI-run Meta & Google ads with live ROI analytics — pay only a % of ad spend.'],
-    ['🛟', 'Support Desk', 'Every complaint becomes a ticket with priority, SLA and history.'],
+    ['trend', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
+    ['chat', 'WhatsApp AI Inbox', 'One inbox for every customer chat, the AI drafts, you approve and send.'],
+    ['package', 'Inventory', 'Stock levels, low-stock alerts and stock value, updated in real time.'],
+    ['receipt', 'Invoicing', 'Send invoices from your phone, track payments, chase debtors politely.'],
+    ['megaphone', 'Ads Studio', 'AI-run Meta & Google ads with live ROI analytics, pay only a % of ad spend.'],
+    ['buoy', 'Support Desk', 'Every complaint becomes a ticket with priority, SLA and history.'],
   ];
   const cats = [
-    ['🏪', 'Nano & Micro', 'Corner shops, side hustles — digital tools at naira prices, nothing to learn.'],
-    ['🛒', 'Small Business', 'Retailers, salons, pharmacies — run sales, stock and WhatsApp in one app.'],
-    ['🏢', 'Medium & Enterprise', 'Facility managers, distributors, franchises — dashboards for every department.'],
+    ['building', 'Nano & Micro', 'Corner shops, side hustles, digital tools at naira prices, nothing to learn.'],
+    ['card', 'Small Business', 'Retailers, salons, pharmacies, run sales, stock and WhatsApp in one app.'],
+    ['globe', 'Medium & Enterprise', 'Facility managers, distributors, franchises, dashboards for every department.'],
   ];
   const tiers = [
     ['Starter', '₦0', 'forever', ['Up to 100 contacts', 'WhatsApp inbox', '5 AI follow-ups / day', 'Community support'], 'Start free'],
@@ -2262,11 +2467,11 @@ function Landing({ onLogin, onStart }) {
       <section className="hero">
         {sessionStorage.getItem('omnicrm_demo') && (
           <div className="demo-banner">
-            👋 You're in a read-only guest demo — log in with <b>guest@omnicrm.ng</b> / <b>guest-demo</b> to explore. Changes are disabled.
+            You're in a read-only guest demo, log in with <b>guest@omnicrm.ng</b> / <b>guest-demo</b> to explore. Changes are disabled.
           </div>
         )}
         <h1>Every business tool your company needs.<br />One app. One naira at a time.</h1>
-        <p className="hero-sub">OmniCRM digitalises how nano, micro, small and enterprise businesses sell, support, stock and advertise — with AI doing the heavy lifting.</p>
+        <p className="hero-sub">OmniCRM digitalises how nano, micro, small and enterprise businesses sell, support, stock and advertise, with AI doing the heavy lifting.</p>
         <div className="hero-cta">
           <button className="btn-primary big" onClick={onStart}>Start free</button>
           <a className="btn-ghost big" href="#pricing">See pricing</a>
@@ -2274,11 +2479,11 @@ function Landing({ onLogin, onStart }) {
       </section>
 
       <section id="features" className="landing-section">
-        <h2>Everything large retailers have — for everyone else</h2>
+        <h2>Everything large retailers have, for everyone else</h2>
         <div className="feat-grid">
           {features.map(([icon, title, desc]) => (
             <div key={title} className="feat">
-              <div className="feat-icon">{icon}</div>
+              <div className="feat-icon"><Icon name={icon} size={20} /></div>
               <b>{title}</b>
               <p>{desc}</p>
             </div>
@@ -2291,7 +2496,7 @@ function Landing({ onLogin, onStart }) {
         <div className="cat-grid">
           {cats.map(([icon, title, desc]) => (
             <div key={title} className="feat">
-              <div className="feat-icon">{icon}</div>
+              <div className="feat-icon"><Icon name={icon} size={20} /></div>
               <b>{title}</b>
               <p>{desc}</p>
             </div>
@@ -2307,19 +2512,19 @@ function Landing({ onLogin, onStart }) {
               <b className="price-name">{name}</b>
               <div className="price-amt">{price}<span>{per}</span></div>
               <ul>
-                {perks.map((p) => <li key={p}>✓ {p}</li>)}
+                {perks.map((p) => <li key={p}><Icon name="check" size={14} /> {p}</li>)}
               </ul>
               <button className={name === 'Pro' ? 'btn-primary' : 'btn-ghost'} onClick={onStart}>{cta}</button>
             </div>
           ))}
         </div>
-        <p className="muted pricing-note">Ads Studio: no fixed fee — you pay a simple percentage of ad spend, and every campaign reports its ROI.</p>
+        <p className="muted pricing-note">Ads Studio: no fixed fee, you pay a simple percentage of ad spend, and every campaign reports its ROI.</p>
       </section>
 
       <footer className="landing-footer">
         <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
         <p className="muted">Made for Nigerian businesses · Lagos, Nigeria</p>
-        <p className="muted">© 2026 OmniCRM</p>
+        <p className="muted">© 2026 OmniCRM · <a href="/privacy.html" style={{ color: 'inherit' }}>Privacy & AI Disclosure</a></p>
       </footer>
     </div>
   );
@@ -2357,7 +2562,7 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
           <div className="pw-wrap">
             <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             <button type="button" className="pw-toggle" onClick={() => setShowPw(!showPw)} aria-label="Toggle password visibility">
-              {showPw ? '🙈' : '👁️'}
+              {showPw ? <Icon name="eyeOff" size={15} /> : <Icon name="eye" size={15} />}
             </button>
           </div>
           {err && <p className="err">{err}</p>}
