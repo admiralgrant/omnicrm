@@ -284,6 +284,8 @@ export default function App() {
 
   if (loading) return <div className="center">Loading…</div>;
 
+  if (token && jwtPayload()?.platform_only) return <SuperAdminApp />;
+
   if (!token) {
     if (authMode === 'landing') return <Landing onLogin={() => setAuthMode('login')} onStart={() => setAuthMode('register')} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />;
     return (
@@ -2445,6 +2447,95 @@ function ReceiptThumb({ id, small }) {
   }, [id]);
   if (!url) return null;
   return <img src={url} alt="receipt" style={{ height: small ? 44 : 120, borderRadius: 8, border: '1px solid var(--line)', cursor: 'zoom-in' }} onClick={(e) => { e.stopPropagation(); window.open(url, '_blank'); }} />;
+}
+
+function SuperAdminApp() {
+  const [summary, setSummary] = useState(null);
+  const [orgs, setOrgs] = useState([]);
+  const [auditRows, setAuditRows] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const load = async () => {
+    try {
+      const [s, o, a] = await Promise.all([api('/platform/summary'), api('/platform/orgs'), api('/platform/audit')]);
+      setSummary(s); setOrgs(o.orgs || []); setAuditRows(a.rows || []);
+    } catch (e) { console.error(e); }
+    setLoaded(true);
+  };
+  useEffect(() => { load(); }, []);
+  const logout = () => { localStorage.removeItem(tokenKey); location.reload(); };
+  const fmt = (n) => '₦' + Number(n || 0).toLocaleString();
+  return (
+    <div className="platform-shell">
+      <header className="platform-top">
+        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>platform console</span></div></div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="chip closed">super admin</span>
+          <button className="btn-ghost sm" onClick={load}>Refresh</button>
+          <button className="btn-ghost sm" onClick={logout}><Icon name="logout" size={14} /> Log out</button>
+        </div>
+      </header>
+      <main className="platform-main">
+        <h1>Platform Console</h1>
+        <p className="muted" style={{ textAlign: 'left' }}>You sit above every organization. Enter any org, reset passwords, control feature access. Every action is audit-logged.</p>
+        {!loaded && <p className="muted">Loading organizations…</p>}
+        {loaded && (
+          <>
+            <div className="kpis">
+              <div className="kpi"><div className="label">Organizations</div><div className="value">{summary?.orgs ?? 0}</div></div>
+              <div className="kpi"><div className="label">Staff members</div><div className="value">{summary?.staff ?? 0}</div></div>
+              <div className="kpi"><div className="label">Contacts</div><div className="value">{summary?.contacts ?? 0}</div></div>
+              <div className="kpi"><div className="label">Paid invoices</div><div className="value">{fmt(summary?.invoices_paid_value)}</div></div>
+              <div className="kpi"><div className="label">Wallet balances</div><div className="value">{fmt(summary?.wallet_balances)}</div></div>
+              <div className="kpi"><div className="label">AI calls today</div><div className="value">{summary?.ai_calls_today ?? 0}</div></div>
+            </div>
+            <div className="card">
+              <h3><Icon name="building" size={15} /> Organizations</h3>
+              {orgs.filter((o) => !o.is_guest).map((o) => (
+                <div key={o.id} className="inv-row" style={{ gridTemplateColumns: '1fr auto' }}>
+                  <div className="thread-info" style={{ paddingLeft: 8 }}>
+                    <b>{o.business_name || o.email}</b>
+                    <span>{o.email} · {o.staff} staff · {o.contacts} contacts · {o.invoices} invoices · joined {String(o.created_at || '').slice(0, 10)}</span>
+                  </div>
+                  <div className="inv-right" style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                    <button className="btn-ghost sm" onClick={async () => {
+                      if (!window.confirm(`Sign in as ${o.business_name || o.email}? Your session switches to their account (2h). Audit logged.`)) return;
+                      const r = await api('/platform/impersonate', { method: 'POST', body: JSON.stringify({ user_id: o.id }) });
+                      localStorage.setItem(tokenKey, r.token);
+                      location.reload();
+                    }}><Icon name="right" size={13} /> Enter org</button>
+                    <button className="btn-ghost sm" onClick={async () => {
+                      const np = window.prompt(`New password for ${o.business_name || o.email} (min 8 chars):`);
+                      if (!np) return;
+                      await api(`/platform/orgs/${o.id}/password`, { method: 'POST', body: JSON.stringify({ new_password: np }) });
+                      alert('Password reset and audit-logged.');
+                    }}>Reset password</button>
+                    <button className="btn-ghost sm" onClick={async () => {
+                      const feats = o.features || {};
+                      const all = !Object.values(feats).some((v) => v === false);
+                      const next = {};
+                      for (const k of ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat']) next[k] = !all;
+                      await api(`/platform/orgs/${o.id}/features`, { method: 'PUT', body: JSON.stringify({ features: { ...feats, ...next } }) });
+                      await load();
+                    }}>{Object.values(o.features || {}).some((v) => v === false) ? 'Enable all features' : 'Disable all features'}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="card">
+              <h3><Icon name="shield" size={15} /> Audit trail</h3>
+              {auditRows.length === 0 && <p className="muted">No platform actions recorded yet.</p>}
+              {auditRows.map((a) => (
+                <div key={a.id} className="inv-line">
+                  <span>{a.action} · {a.detail || ''}</span>
+                  <span className="muted">{(a.created_at || '').slice(0, 16)} · {a.admin_email}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
 }
 
 function Landing({ onLogin, onStart, theme, onToggleTheme }) {
