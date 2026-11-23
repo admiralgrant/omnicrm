@@ -667,6 +667,18 @@ export default function App() {
             )}
           </div>
         </div>
+        {jwtPayload()?.imp_by && (
+          <div className="imp-banner">
+            <span><Icon name="shield" size={14} /> You're viewing an organization as a platform admin.</span>
+            <button className="btn-ghost sm" onClick={async () => {
+              try {
+                const r = await api('/platform/exit', { method: 'POST' });
+                localStorage.setItem(tokenKey, r.token);
+                location.reload();
+              } catch (e) { alert(e.message || 'Could not return to the platform console'); }
+            }}><Icon name="left" size={13} /> Return to Platform Console</button>
+          </div>
+        )}
         {view === 'dashboard' && dash && (
           <>
             <h1>{greeting()}{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
@@ -1509,35 +1521,7 @@ export default function App() {
                 {!isGuest && (
                   <>
                 <h3 style={{ marginTop: 14 }}><Icon name="link" size={14} /> Demo links (shareable, revocable)</h3>
-                <p className="muted">Create a link to share with anyone. Revoke it and it instantly stops working for them.</p>
-                <button className="btn-primary sm" onClick={async () => {
-                  const label = prompt('Label for this link? (e.g. "Investor pitch", "Kunle, Tue demo")') || '';
-                  const d = await api('/demo-links', { method: 'POST', body: JSON.stringify({ label }) });
-                  setDemoLinks((await api('/demo-links')).links);
-                  const full = `${location.origin}${d.url}`;
-                  navigator.clipboard.writeText(full);
-                  alert(`Demo link created and copied:\n${full}\n\nTell me "break <label>" any time to revoke it.`);
-                }}>+ Create demo link</button>
-                {demoLinks.length === 0 && <p className="muted" style={{ marginTop: 8 }}>No demo links yet.</p>}
-                {demoLinks.map((l) => (
-                  <div key={l.id} className="inv-line" style={{ marginTop: 6 }}>
-                    <span>{l.label || l.token}{l.active ? '' : ' (revoked)'} <span className="muted" style={{ fontSize: 11 }}>{l.token}</span></span>
-                    <span className="quick-actions" style={{ marginTop: 0 }}>
-                      {l.active ? (
-                        <>
-                          <button className="btn-ghost sm" onClick={() => { navigator.clipboard.writeText(`${location.origin}/demo.html?token=${l.token}`); alert('Link copied.'); }}>Copy</button>
-                          <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={async () => {
-                            if (!window.confirm(`Revoke this link? Anyone holding it loses access instantly.`)) return;
-                            await api(`/demo-links/${l.id}`, { method: 'DELETE' });
-                            setDemoLinks((await api('/demo-links')).links);
-                          }}>Revoke</button>
-                        </>
-                      ) : (
-                        <span className="chip low">revoked</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
+                <p className="muted">Demo links are managed from the Platform Console. Ask your platform admin for one.</p>
                   </>
                 )}
               </>
@@ -2453,11 +2437,14 @@ function SuperAdminApp() {
   const [summary, setSummary] = useState(null);
   const [orgs, setOrgs] = useState([]);
   const [auditRows, setAuditRows] = useState([]);
+  const [demoLinks, setDemoLinks] = useState([]);
+  const [demoOrg, setDemoOrg] = useState('');
+  const [demoLabel, setDemoLabel] = useState('');
   const [loaded, setLoaded] = useState(false);
   const load = async () => {
     try {
-      const [s, o, a] = await Promise.all([api('/platform/summary'), api('/platform/orgs'), api('/platform/audit')]);
-      setSummary(s); setOrgs(o.orgs || []); setAuditRows(a.rows || []);
+      const [s, o, a, dl] = await Promise.all([api('/platform/summary'), api('/platform/orgs'), api('/platform/audit'), api('/platform/demo-links')]);
+      setSummary(s); setOrgs(o.orgs || []); setAuditRows(a.rows || []); setDemoLinks(dl.links || []);
     } catch (e) { console.error(e); }
     setLoaded(true);
   };
@@ -2518,6 +2505,45 @@ function SuperAdminApp() {
                       await load();
                     }}>{Object.values(o.features || {}).some((v) => v === false) ? 'Enable all features' : 'Disable all features'}</button>
                   </div>
+                </div>
+              ))}
+            </div>
+            <div className="card">
+              <h3><Icon name="link" size={15} /> Demo links (shareable, revocable)</h3>
+              <p className="muted" style={{ textAlign: 'left' }}>Create guest demo links for any organization. Revoke any link and it stops working instantly.</p>
+              <div className="inv-item-row" style={{ alignItems: 'flex-end' }}>
+                <div className="inv-field" style={{ maxWidth: 260 }}>
+                  <label className="inv-label" style={{ marginTop: 0 }}>Organization</label>
+                  <select value={demoOrg} onChange={(e) => setDemoOrg(e.target.value)}>
+                    <option value="">Pick organization…</option>
+                    {orgs.map((o) => <option key={o.id} value={o.id}>{o.business_name || o.email}</option>)}
+                  </select>
+                </div>
+                <div className="inv-field">
+                  <label className="inv-label" style={{ marginTop: 0 }}>Label (optional)</label>
+                  <input placeholder="e.g. Investor pitch" value={demoLabel} onChange={(e) => setDemoLabel(e.target.value)} />
+                </div>
+                <button className="btn-primary sm" onClick={async () => {
+                  if (!demoOrg) { alert('Pick an organization first'); return; }
+                  const r = await api('/platform/demo-links', { method: 'POST', body: JSON.stringify({ user_id: Number(demoOrg), label: demoLabel }) });
+                  setDemoLabel('');
+                  await load();
+                  window.prompt('Demo link (copy for sharing):', `${window.location.origin}${r.url}`);
+                }}><Icon name="plus" size={13} /> Create demo link</button>
+              </div>
+              {demoLinks.length === 0 && <p className="muted">No demo links yet.</p>}
+              {demoLinks.map((l) => (
+                <div key={l.id} className="inv-line" style={{ marginTop: 8 }}>
+                  <span><b>{l.business_name || l.email}</b> · {l.label || 'no label'} · <span className="muted">{l.active ? 'active' : 'revoked'} · {String(l.created_at || '').slice(0, 10)}</span></span>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    {l.active === 1 && <button className="btn-ghost sm" onClick={() => window.prompt('Demo link:', `${window.location.origin}/demo.html?token=${l.token}`)}>Copy link</button>}
+                    {l.active === 1 && <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={async () => {
+                      if (!window.confirm('Revoke this link? Anyone holding it loses access instantly.')) return;
+                      await api(`/platform/demo-links/${l.id}/revoke`, { method: 'POST' });
+                      await load();
+                    }}>Revoke</button>}
+                    {l.active !== 1 && <span className="chip low">revoked</span>}
+                  </span>
                 </div>
               ))}
             </div>
