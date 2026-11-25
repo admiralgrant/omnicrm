@@ -44,6 +44,7 @@ export default function App() {
   const [expenseReport, setExpenseReport] = useState(null);
   const [inboxChannels, setInboxChannels] = useState([]);
   const [inboxChannel, setInboxChannel] = useState('whatsapp');
+  const [tierData, setTierData] = useState(null);
   const [staffAdd, setStaffAdd] = useState(null); // quick add-staff form on Account
   const [activeContact, setActiveContact] = useState(null);
   const [msgs, setMsgs] = useState([]);
@@ -167,6 +168,7 @@ export default function App() {
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
         setExpenseData(ex); setInboxChannels(ch.channels || []);
         if (ex.see_all) setExpenseReport(await api(`/expenses/report?month=${new Date().toISOString().slice(0, 7)}`));
+        try { setTierData(await api('/org/tier')); } catch { /* staff-safe */ }
         try { setOrgFeats((await api('/org/features')).features); } catch { /* staff-safe */ }
         try { setHr(await api('/hr-dashboard')); } catch { /* non-HR staff */ }
         try { setPayrollRuns((await api('/payroll/runs')).runs); } catch { /* non-HR */ }
@@ -1466,7 +1468,15 @@ export default function App() {
                 <div className="inv-line"><span>Business</span><span>{account.user.business_name || ', '}</span></div>
                 <div className="inv-line"><span>Owner</span><span>{account.user.name}</span></div>
                 <div className="inv-line"><span>Email</span><span>{account.user.email}</span></div>
-                <div className="inv-line"><span>Plan</span><span className="chip closed">{account.plan}</span></div>
+                <div className="inv-line"><span>Plan</span><span className="chip closed">{tierData ? `${tierData.label} · ${tierData.price}` : account.plan}</span></div>
+                {tierData && (
+                  <div className="tier-box">
+                    <div className="inv-line"><span>Staff</span><span>{tierData.usage.staff}{tierData.staff_cap > 0 ? ` of ${tierData.staff_cap}` : ' · unlimited'}</span></div>
+                    <div className="inv-line"><span>Contacts</span><span>{tierData.usage.contacts}{tierData.contact_cap > 0 ? ` of ${tierData.contact_cap.toLocaleString()}` : ' · unlimited'}</span></div>
+                    <div className="inv-line"><span>Inbox channels</span><span>{(tierData.channels || []).map((c) => c === 'whatsapp' ? 'WhatsApp' : c === 'instagram' ? 'Instagram' : c === 'messenger' ? 'Messenger' : c === 'tiktok' ? 'TikTok' : 'Email').join(', ')}</span></div>
+                    {tierData.tier !== 'scale' && <p className="muted">Need more? Upgrade to unlock extra channels, inventory, wallet and more seats.</p>}
+                  </div>
+                )}
                 <h3 style={{ marginTop: 14 }}><Icon name="banknote" size={14} /> Billing</h3>
                 <div className="inv-line"><span>Conversion fees earned</span><span>{fmt(account.billing.fees_earned_ngn)}</span></div>
                 <div className="inv-line"><span>Receivables outstanding</span><span>{fmt(account.billing.receivables_ngn)}</span></div>
@@ -2475,25 +2485,26 @@ export default function App() {
               </div>
             )}
             <div className="inv-head" style={{ marginTop: 10 }}>
-              <span className="muted">Filter range (up to 12 months)</span>
+              <span className="muted">Filter by specific dates (up to 12 months)</span>
               <div className="quick-actions" style={{ marginTop: 0 }}>
-                <input type="month" value={expenseFrom} max={expenseTo} onChange={(e) => setExpenseFrom(e.target.value)} />
+                <input type="date" value={expenseFrom} max={expenseTo} onChange={(e) => setExpenseFrom(e.target.value)} />
                 <span className="muted">to</span>
-                <input type="month" value={expenseTo} min={expenseFrom} onChange={(e) => setExpenseTo(e.target.value)} />
+                <input type="date" value={expenseTo} min={expenseFrom} onChange={(e) => setExpenseTo(e.target.value)} />
                 <button className="btn-ghost sm" onClick={async () => {
                   const to = new Date(); const from = new Date(to.getFullYear(), to.getMonth() - 11, 1);
-                  setExpenseFrom(from.toISOString().slice(0, 7)); setExpenseTo(to.toISOString().slice(0, 7));
-                  setExpenseData(await api(`/expenses?from=${from.toISOString().slice(0, 7)}&to=${to.toISOString().slice(0, 7)}`));
-                  if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?from=${from.toISOString().slice(0, 7)}&to=${to.toISOString().slice(0, 7)}`));
+                  const f = from.toISOString().slice(0, 10); const t = to.toISOString().slice(0, 10);
+                  setExpenseFrom(f); setExpenseTo(t);
+                  setExpenseData(await api(`/expenses?from=${f}&to=${t}`));
+                  if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?from=${f}&to=${t}`));
                 }}>Last 12 months</button>
                 <button className="btn-primary sm" onClick={async () => {
-                  if (!expenseFrom || !expenseTo) { alert('Pick both months'); return; }
+                  if (!expenseFrom || !expenseTo) { alert('Pick both dates'); return; }
                   setExpenseData(await api(`/expenses?from=${expenseFrom}&to=${expenseTo}`));
                   if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?from=${expenseFrom}&to=${expenseTo}`));
                 }}>Apply</button>
               </div>
             </div>
-            {(expenseData.expenses || []).filter((e) => (!expenseFrom || (e.expense_date || '') >= expenseFrom + '-01') && (!expenseTo || (e.expense_date || '') <= expenseTo + '-31')).map((e) => (
+            {(expenseData.expenses || []).filter((e) => (!expenseFrom || (e.expense_date || '') >= expenseFrom) && (!expenseTo || (e.expense_date || '') <= expenseTo)).map((e) => (
               <div key={e.id} className="inv-row">
                 <div className="thread-ava"><Icon name="receipt" size={15} /></div>
                 <div className="thread-info">
@@ -2885,12 +2896,14 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
 
 
   const features = [
-    ['trend', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
-    ['chat', 'WhatsApp AI Inbox', 'One inbox for every customer chat, the AI drafts, you approve and send.'],
-    ['package', 'Inventory', 'Stock levels, low-stock alerts and stock value, updated in real time.'],
-    ['receipt', 'Invoicing', 'Send invoices from your phone, track payments, chase debtors politely.'],
-    ['megaphone', 'Ads Studio', 'AI-run Meta & Google ads with live ROI analytics, pay only a % of ad spend.'],
-    ['buoy', 'Support Desk', 'Every complaint becomes a ticket with priority, SLA and history.'],
+    ['trend', 'Sales CRM', 'Pipeline, follow-ups and Zuri-drafted messages that close deals while you sleep.'],
+    ['chat', 'Unified Inbox', 'WhatsApp, Instagram, Messenger, TikTok and email — one thread per customer, unread badges on every channel.'],
+    ['users', 'Support Desk', 'Your whole team handles enquiries at once — claim, respond in real time, never collide.'],
+    ['package', 'Self-Updating Inventory', 'Stock deductions the moment an order is delivered or an invoice is paid, plus daily digests.'],
+    ['receipt', 'Invoicing & Wallet', 'Branded invoices, payment links, a live wallet ledger and expenses with date-range reports.'],
+    ['sparkles', 'Zuri AI', 'Your built-in assistant: drafts replies, chases follow-ups and chats with website visitors 24/7.'],
+    ['briefcase', 'HR Suite', 'Staff, onboarding, payroll, advances, pension, HMO, leave and attendance in one panel.'],
+    ['megaphone', 'Ads Studio', 'AI-planned Meta and Google ads with live ROI — pay only a percentage of ad spend.'],
   ];
   const cats = [
     ['building', 'Nano & Micro', 'Corner shops, side hustles, digital tools at naira prices, nothing to learn.'],
@@ -2923,8 +2936,8 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
             You're in a read-only guest demo, log in with <b>guest@omnicrm.ng</b> / <b>guest-demo</b> to explore. Changes are disabled.
           </div>
         )}
-        <h1>Every business tool your company needs.<br />One app. One naira at a time.</h1>
-        <p className="hero-sub">OmniCRM digitalises how nano, micro, small and enterprise businesses sell, support, stock and advertise, with AI doing the heavy lifting.</p>
+        <h1>Every chat. Every sale. Every naira.<br />One place.</h1>
+        <p className="hero-sub">OmniCRM brings WhatsApp, Instagram, Messenger, TikTok and email into one smart inbox, and runs your sales, stock, invoicing, wallet, expenses and HR — with <b>Zuri</b>, your built-in AI, doing the heavy lifting.</p>
         <div className="hero-cta">
           <button className="btn-primary big" onClick={onStart}>Start free</button>
           <a className="btn-ghost big" href="#pricing">See pricing</a>
