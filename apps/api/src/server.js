@@ -2031,7 +2031,7 @@ app.post('/wallet/payout', { preHandler: requireAuth }, async (req, reply) => {
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
 
 // ---- platform (super-admin) console: the vendor above all orgs ----
-const platformOnly = (req, reply, done) => (req.user.platform ? done() : reply.code(403).send({ error: 'Platform admins only' }));
+const platformOnly = (req, reply, done) => (req.user.platform_only ? done() : reply.code(403).send({ error: 'Platform admins only' }));
 const audit = (adminId, action, targetId, detail) => {
   db.prepare('INSERT INTO platform_audit (admin_id, action, target_id, detail) VALUES (?, ?, ?, ?)')
     .run(adminId, action, targetId || null, detail || null);
@@ -2065,7 +2065,7 @@ app.get('/platform/orgs', { preHandler: [requireAuth, platformOnly] }, async (re
 
 app.post('/platform/impersonate', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
   const { user_id } = req.body || {};
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
+  const u = db.prepare('SELECT * FROM users WHERE id = ? AND COALESCE(is_guest,0) = 0').get(user_id);
   if (!u) return reply.code(404).send({ error: 'Organization not found' });
   audit(req.user.id, 'impersonate', u.id, `Signed in as ${u.business_name || u.email}`);
   const token = jwt.sign({ id: u.id, email: u.email, name: u.name, guest: !!u.is_guest, imp_by: req.user.id }, JWT_SECRET, { expiresIn: '2h' });
