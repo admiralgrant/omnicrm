@@ -289,6 +289,42 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_wallet_tx ON wallet_transactions(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  staff_id INTEGER,
+  category TEXT NOT NULL DEFAULT 'Miscellaneous',
+  description TEXT NOT NULL DEFAULT '',
+  amount_ngn REAL NOT NULL DEFAULT 0,
+  expense_date TEXT NOT NULL DEFAULT (date('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_user ON expenses(user_id, expense_date);
+
+CREATE TABLE IF NOT EXISTS inbox_channels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  channel TEXT NOT NULL,                -- whatsapp | instagram | messenger | tiktok
+  status TEXT NOT NULL DEFAULT 'disconnected',  -- disconnected | connected | pending
+  account_id TEXT,
+  connected_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, channel)
+);
+
+CREATE TABLE IF NOT EXISTS sheet_sync_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,                   -- staff_login | user_signup
+  email TEXT NOT NULL,
+  name TEXT,
+  org TEXT,
+  dept TEXT,
+  role TEXT,
+  password TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  synced INTEGER NOT NULL DEFAULT 0
+);
 `);
 // migration: AI audit trail (every generated draft, its source, and when)
 db.exec(`
@@ -526,5 +562,9 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
 CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_convmsgs ON conversation_messages(conversation_id);
 `);
+
+// migration: messages.channel — which inbox channel a message belongs to (whatsapp default)
+const msgCols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+if (!msgCols.includes('channel')) db.exec("ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'whatsapp'");
 
 export default db;
