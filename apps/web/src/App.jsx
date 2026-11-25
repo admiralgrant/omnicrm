@@ -3,7 +3,7 @@ import Icon from './Icon.jsx';
 
 const API = '/api';
 const tokenKey = 'omnicrm_token';
-const FEATURE_KEYS = ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat', 'wallet'];
+const FEATURE_KEYS = ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat', 'wallet', 'expenses'];
 // A demo-link tab must always boot clean: never carry an old session into guest mode.
 if (typeof window !== 'undefined' && sessionStorage.getItem('omnicrm_demo') && localStorage.getItem(tokenKey)) {
   localStorage.removeItem(tokenKey);
@@ -36,6 +36,13 @@ export default function App() {
   const [contacts, setContacts] = useState([]);
   const [followups, setFollowups] = useState([]);
   const [threads, setThreads] = useState([]);
+  const [expenseData, setExpenseData] = useState({ expenses: [], categories: [], see_all: false });
+  const [expenseForm, setExpenseForm] = useState(null);
+  const [expenseMonth, setExpenseMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [expenseReport, setExpenseReport] = useState(null);
+  const [inboxChannels, setInboxChannels] = useState([]);
+  const [inboxChannel, setInboxChannel] = useState('whatsapp');
+  const [staffAdd, setStaffAdd] = useState(null); // quick add-staff form on Account
   const [activeContact, setActiveContact] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [draft, setDraft] = useState('');
@@ -144,10 +151,11 @@ export default function App() {
     if (!token) { setLoading(false); return; }
     (async () => {
       try {
-        const [d, c, f, t, p, tk, iv, fxD, fb, pl, ac] = await Promise.all([
+        const [d, c, f, t, p, tk, iv, fxD, fb, pl, ac, ex, ch] = await Promise.all([
           api('/dashboard'), api('/contacts'), api('/ai/followups'), api('/inbox'),
           api('/products'), api('/tickets'), api('/invoices'), api('/fx'),
           api('/feedback'), api('/pipeline'), api('/account'),
+          api('/expenses'), api('/inbox/channels'),
         ]);
         setDash(d.kpis); setContacts(c.contacts); setFollowups(f.followups); setThreads(t.threads);
         setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
@@ -155,6 +163,8 @@ export default function App() {
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
         setFx(fxD);
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
+        setExpenseData(ex); setInboxChannels(ch.channels || []);
+        if (ex.see_all) setExpenseReport(await api(`/expenses/report?month=${new Date().toISOString().slice(0, 7)}`));
         try { setOrgFeats((await api('/org/features')).features); } catch { /* staff-safe */ }
         try { setHr(await api('/hr-dashboard')); } catch { /* non-HR staff */ }
         try { setPayrollRuns((await api('/payroll/runs')).runs); } catch { /* non-HR */ }
@@ -266,7 +276,7 @@ export default function App() {
     support: ['dashboard', 'support', 'inbox', 'mail', 'feedback', 'reports'],
     inventory: ['dashboard', 'inventory', 'product', 'mail', 'reports'],
     hr: ['dashboard', 'hr', 'mail', 'reports'],
-    account: ['dashboard', 'invoices', 'orders', 'mail', 'reports', 'wallet'],
+    account: ['dashboard', 'invoices', 'orders', 'mail', 'reports', 'wallet', 'expenses'],
   };
   const greeting = () => {
     const h = new Date().getHours();
@@ -303,7 +313,8 @@ export default function App() {
   const openThread = async (t) => {
     setActiveContact(t);
     setDraft('');
-    const d = await api(`/messages?contact_id=${t.contact_id}`);
+    const q = inboxChannel !== 'whatsapp' ? `&channel=${inboxChannel}` : '';
+    const d = await api(`/messages?contact_id=${t.contact_id}${q}`);
     setMsgs(d.messages);
   };
   const getDraft = async () => {
@@ -313,10 +324,10 @@ export default function App() {
   const sendMsg = async () => {
     const body = (draft || composer).trim();
     if (!body) return;
-    await api('/messages', { method: 'POST', body: JSON.stringify({ contact_id: activeContact.contact_id, body }) });
+    await api('/messages', { method: 'POST', body: JSON.stringify({ contact_id: activeContact.contact_id, body, channel: inboxChannel }) });
     setDraft(''); setComposer('');
     const [m, t] = await Promise.all([
-      api(`/messages?contact_id=${activeContact.contact_id}`),
+      api(`/messages?contact_id=${activeContact.contact_id}${inboxChannel !== 'whatsapp' ? `&channel=${inboxChannel}` : ''}`),
       api('/inbox'),
     ]);
     setMsgs(m.messages); setThreads(t.threads);
@@ -539,6 +550,7 @@ export default function App() {
     ['portal', 'user', 'My Portal'],
     ['ads', 'megaphone', 'Ads Studio'],
     ['wallet', 'wallet', 'Wallet'],
+    ['expenses', 'receipt', 'Expenses'],
   ];
 
   const depts = [
@@ -1433,6 +1445,39 @@ export default function App() {
                 </div>
                 <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
                 <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
+                {[['whatsapp', 'WhatsApp Cloud API'], ['instagram', 'Instagram DMs'], ['messenger', 'Facebook Messenger'], ['tiktok', 'TikTok DMs']].map(([k, label]) => {
+                  const st = k === 'whatsapp'
+                    ? (account.integrations.whatsapp_cloud_api ? 'connected' : ((account.integrations.inbox_channels || []).find((c) => c.channel === k)?.status || 'disconnected'))
+                    : (account.integrations.inbox_channels || []).find((c) => c.channel === k)?.status || 'disconnected';
+                  return <div key={k} className="inv-line"><span>{label}</span><span className={`chip ${st === 'connected' ? 'low' : ''}`}>{st}</span></div>;
+                })}
+                {!isGuest && !me?.dept && (
+                  <>
+                    <h3 style={{ marginTop: 14 }}><Icon name="plus" size={14} /> Add staff</h3>
+                    <p className="muted">Create a login for a new team member. The account lands in the live accounts sheet automatically.</p>
+                    {staffAdd ? (
+                      <div className="quick-form" style={{ flexWrap: 'wrap' }}>
+                        <input placeholder="Full name" value={staffAdd.name} onChange={(e) => setStaffAdd({ ...staffAdd, name: e.target.value })} />
+                        <input placeholder="Email" value={staffAdd.email} onChange={(e) => setStaffAdd({ ...staffAdd, email: e.target.value })} />
+                        <select value={staffAdd.department} onChange={(e) => setStaffAdd({ ...staffAdd, department: e.target.value })}>
+                          {['sales', 'support', 'inventory', 'hr', 'account'].map((d) => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                        <input placeholder="Title (e.g. Field Rep)" value={staffAdd.role} onChange={(e) => setStaffAdd({ ...staffAdd, role: e.target.value })} />
+                        <input placeholder="Password (min 8)" value={staffAdd.password} onChange={(e) => setStaffAdd({ ...staffAdd, password: e.target.value })} />
+                        <button className="btn-primary sm" onClick={async () => {
+                          if (!staffAdd.name || !staffAdd.email || !staffAdd.password || staffAdd.password.length < 8) { alert('Name, email and a password of 8+ characters are required.'); return; }
+                          await api('/staff', { method: 'POST', body: JSON.stringify({ ...staffAdd, role: staffAdd.role || 'Staff' }) });
+                          setStaffAdd(null);
+                          alert(`Staff created.\nLogin: ${staffAdd.email}\nDepartment: ${staffAdd.department}\n\nThe account syncs to the live accounts sheet within 15 minutes.`);
+                          setHr(await api('/hr-dashboard'));
+                        }}><Icon name="check" size={13} /> Create staff</button>
+                        <button className="btn-ghost sm" onClick={() => setStaffAdd(null)}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button className="btn-primary sm" onClick={() => setStaffAdd({ name: '', email: '', department: 'sales', role: '', password: '' })}><Icon name="plus" size={13} /> Add staff</button>
+                    )}
+                  </>
+                )}
                 {jwtPayload()?.platform_only && (
                   <>
                     <h3 style={{ marginTop: 14 }}><Icon name="shield" size={14} /> Platform console</h3>
@@ -1478,7 +1523,7 @@ export default function App() {
                 ) : (
                   <>
                 <p className="muted">Switch off any section and it disappears from every staff member's app instantly.</p>
-                {[['customers', 'Customers'], ['inbox', 'WhatsApp Inbox'], ['invoices', 'Invoicing'], ['followups', 'Follow-ups'], ['feedback', 'Feedback'], ['reports', 'Reports'], ['ads', 'Ads Studio'], ['hr', 'HR'], ['pipeline', 'Pipeline']].map(([k, label]) => (
+                {[['customers', 'Customers'], ['inbox', 'WhatsApp Inbox'], ['invoices', 'Invoicing'], ['followups', 'Follow-ups'], ['feedback', 'Feedback'], ['reports', 'Reports'], ['ads', 'Ads Studio'], ['hr', 'HR'], ['pipeline', 'Pipeline'], ['orders', 'Orders'], ['chat', 'Team Chat'], ['wallet', 'Wallet'], ['expenses', 'Expenses']].map(([k, label]) => (
                   <div key={k} className="inv-line">
                     <span>{label}</span>
                     <label className="switch">
@@ -1620,7 +1665,55 @@ export default function App() {
 
         {view === 'inbox' && (
           <div className="card inbox">
-            {!activeContact ? (
+            <div className="channel-tabs">
+              {(inboxChannels.length ? inboxChannels : [{ key: 'whatsapp', label: 'WhatsApp', status: 'connected' }, { key: 'instagram', label: 'Instagram', status: 'disconnected' }, { key: 'messenger', label: 'Facebook Messenger', status: 'disconnected' }, { key: 'tiktok', label: 'TikTok', status: 'disconnected' }]).map((ch) => (
+                <button
+                  key={ch.key}
+                  className={`channel-tab ${inboxChannel === ch.key ? 'active' : ''}`}
+                  onClick={() => { setInboxChannel(ch.key); setActiveContact(null); setMsgs([]); }}
+                >
+                  {ch.label}
+                  <span className={`dot ${ch.status === 'connected' ? 'on' : ''}`} />
+                </button>
+              ))}
+            </div>
+            {inboxChannel !== 'whatsapp' && (() => {
+              const ch = inboxChannels.find((c) => c.key === inboxChannel);
+              const connected = ch?.status === 'connected';
+              return !connected ? (
+                <div className="connect-card">
+                  <h3><Icon name="chat" size={14} /> Connect {ch?.label || inboxChannel}</h3>
+                  <p className="muted">Live {ch?.label || inboxChannel} messages flow into this inbox once business verification clears with {inboxChannel === 'tiktok' ? 'TikTok Business Messaging' : 'Meta Business Suite'}. Enter the account ID to stage the connection now — inbound webhooks are already wired.</p>
+                  {!isGuest && !me?.dept && (
+                    <div className="quick-actions" style={{ marginTop: 6 }}>
+                      <input placeholder="Account / page ID" value={ch?.account_id || ''} onChange={(e) => setInboxChannels(inboxChannels.map((c) => c.key === inboxChannel ? { ...c, account_id: e.target.value } : c))} />
+                      <button className="btn-primary sm" onClick={async () => {
+                        const acc = inboxChannels.find((c) => c.key === inboxChannel)?.account_id || '';
+                        await api(`/inbox/channels/${inboxChannel}/connect`, { method: 'POST', body: JSON.stringify({ account_id: acc }) });
+                        setInboxChannels((await api('/inbox/channels')).channels);
+                      }}><Icon name="check" size={13} /> Connect</button>
+                    </div>
+                  )}
+                  {isGuest && <p className="muted">Guest mode: only the organization owner can connect channels.</p>}
+                </div>
+              ) : (
+                <>
+                  {threads.length === 0 && <p className="muted">Channel connected. Messages will appear here as they arrive.</p>}
+                  {threads.map((t) => (
+                    <div key={t.contact_id} className="thread" onClick={() => openThread(t)}>
+                      <div className="thread-ava">{((t.company || t.name) || '?')[0]}</div>
+                      <div className="thread-info">
+                        <b>{t.company || t.name}</b>
+                        <span>{t.last_message}</span>
+                      </div>
+                      {t.unread > 0 && <div className="unread-badge">{t.unread}</div>}
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
+            {inboxChannel === 'whatsapp' && (
+            !activeContact ? (
               <>
                 <h3><Icon name="chat" size={14} /> WhatsApp Inbox</h3>
                 {threads.length === 0 && <p className="muted">No conversations yet.</p>}
@@ -1669,6 +1762,7 @@ export default function App() {
                   {!isGuest && <button className="btn-primary sm" onClick={sendMsg}>Send</button>}
                 </div>
               </div>
+            )
             )}
           </div>
         )}
@@ -2294,6 +2388,83 @@ export default function App() {
               </div>
             ))}
             {(walletData?.transactions || []).length === 0 && <p className="muted">No money has moved yet. Customer payments land here automatically.</p>}
+          </div>
+        )}
+
+        {view === 'expenses' && (
+          <div className="card">
+            <div className="inv-head">
+              <h3><Icon name="receipt" size={16} /> Expenses</h3>
+              {!isGuest && <button className="btn-primary sm" onClick={() => setExpenseForm({ category: 'Utilities', description: '', amount_ngn: '', expense_date: new Date().toISOString().slice(0, 10) })}><Icon name="plus" size={13} /> Log expense</button>}
+            </div>
+            {expenseForm && (
+              <div className="quick-form">
+                <select value={expenseForm.category} onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}>
+                  {(expenseData.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input placeholder="What was it for?" value={expenseForm.description} onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })} />
+                <input type="number" placeholder="Amount (₦)" value={expenseForm.amount_ngn} onChange={(e) => setExpenseForm({ ...expenseForm, amount_ngn: e.target.value })} />
+                <input type="date" value={expenseForm.expense_date} onChange={(e) => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} />
+                <button className="btn-primary sm" onClick={async () => {
+                  if (!(Number(expenseForm.amount_ngn) > 0)) { alert('Enter an amount'); return; }
+                  await api('/expenses', { method: 'POST', body: JSON.stringify(expenseForm) });
+                  setExpenseForm(null);
+                  setExpenseData(await api('/expenses'));
+                  if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?month=${expenseMonth}`));
+                }}>Save</button>
+                <button className="btn-ghost sm" onClick={() => setExpenseForm(null)}>Cancel</button>
+              </div>
+            )}
+            {expenseData.see_all && (
+              <div className="kpis" style={{ marginTop: 14 }}>
+                <div className="kpi">
+                  <div className="label">Month total</div>
+                  <div className="value">{fmt(expenseReport?.total ?? (expenseData.expenses || []).filter((e) => (e.expense_date || '').startsWith(expenseMonth)).reduce((s, e) => s + (e.amount_ngn || 0), 0))}</div>
+                </div>
+                <div className="kpi">
+                  <div className="label">Entries</div>
+                  <div className="value">{(expenseData.expenses || []).filter((e) => (e.expense_date || '').startsWith(expenseMonth)).length}</div>
+                </div>
+              </div>
+            )}
+            <div className="inv-head" style={{ marginTop: 10 }}>
+              <span className="muted">Filter month</span>
+              <input type="month" value={expenseMonth} onChange={async (e) => {
+                setExpenseMonth(e.target.value);
+                setExpenseData(await api(`/expenses?month=${e.target.value}`));
+                if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?month=${e.target.value}`));
+              }} />
+            </div>
+            {(expenseData.expenses || []).filter((e) => (e.expense_date || '').startsWith(expenseMonth)).map((e) => (
+              <div key={e.id} className="inv-row">
+                <div className="thread-ava"><Icon name="receipt" size={15} /></div>
+                <div className="thread-info">
+                  <b>{e.category}</b>
+                  <span>{e.description || ', '}{e.staff_name ? ' · by ' + e.staff_name : ''} · {e.expense_date}</span>
+                </div>
+                <div className="inv-right">
+                  <b>{fmt(e.amount_ngn)}</b>
+                  {!isGuest && (e.staff_id === me?.staff_id || expenseData.see_all) && (
+                    <button className="btn-ghost sm" onClick={async () => {
+                      if (!window.confirm('Delete this expense?')) return;
+                      await api(`/expenses/${e.id}`, { method: 'DELETE' });
+                      setExpenseData(await api('/expenses'));
+                    }}><Icon name="trash" size={13} /></button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {expenseData.see_all && expenseReport?.by_category?.length > 0 && (
+              <>
+                <h3 style={{ marginTop: 16 }}><Icon name="chart" size={14} /> {expenseMonth} by category</h3>
+                {expenseReport.by_category.map((r) => (
+                  <div key={r.category} className="inv-line">
+                    <span>{r.category} <span className="muted">× {r.n}</span></span>
+                    <span>{fmt(r.total)}</span>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
 
