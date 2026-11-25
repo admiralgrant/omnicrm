@@ -349,6 +349,12 @@ function zuriReply(message) {
   if (has('demo', 'book', 'trial', 'try it', 'schedule', 'see it', 'walk me', 'show me')) {
     return "A demo takes about 20 minutes and we'll walk through YOUR business workflow. Leave your name and phone number here and the team will call you, or tap Start free on this page to explore a read-only demo right now.";
   }
+  if (has('only', 'just', 'custom', 'mix', 'match', 'combine', '2 features', 'two features', 'few features', 'some features', 'pick', 'choose features', 'need only', 'all i need')) {
+    if (has('inventory', 'stock') || has('instagram', 'inbox', 'whatsapp', 'channel')) {
+      return "Good news: our plans are packaged so you are not paying for what you do not need. Basic covers products, inventory, invoices and expenses at ₦13,999 a month. If you also want the Instagram inbox, Grow (₦39,999) adds all five channels. If you want a custom mix, say Talk to a human and we will tailor a plan for your business.";
+    }
+    return "You can start small. Basic is ₦13,999 a month for products, inventory, invoicing and expenses, and every higher plan adds more. If the ready plans do not fit exactly, say Talk to a human and we will tailor one for you.";
+  }
   if (has('whatsapp', 'instagram', 'tiktok', 'messenger', 'email', 'social', 'channel', 'inbox', 'chat with customer', 'customer chat')) {
     return "OmniCRM brings WhatsApp, Instagram DMs, Facebook Messenger, TikTok DMs and email into ONE inbox. Each customer gets one thread, your team claims enquiries in real time, and unread counts sit on every channel tab.";
   }
@@ -363,6 +369,9 @@ function zuriReply(message) {
   }
   if (has('feature', 'what can', 'what does', 'module', 'hr', 'payroll', 'ads', 'report', 'reports')) {
     return "OmniCRM covers: sales CRM, multi-channel inbox, invoicing, orders, inventory, expenses, wallet, HR & payroll, Ads Studio, and reports, with departments so staff only see their own work. Which area should I open up?";
+  }
+  if (has('understand', 'confused', 'not answering', 'wrong', 'listen', 'what do you mean')) {
+    return "I am sorry, let me get this right. Ask me about pricing, a specific feature, or a demo. Or say Talk to a human and a real person will take over this chat immediately.";
   }
   if (has('human', 'agent', 'real person', 'speak to', 'talk to', 'someone', 'call me', 'contact', 'phone', 'number', 'reach')) {
     return "Of course, I'll hand you to a real person. Drop your name and phone number here and it goes straight to the OmniCRM team's inbox in the CRM; they'll reply to you right here in this chat, usually within one business day.";
