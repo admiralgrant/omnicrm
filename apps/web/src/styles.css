@@ -365,3 +365,28 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 /* inline quick form (expenses + add staff) */
 .quick-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 0; }
 .quick-form input, .quick-form select { flex: 1; min-width: 130px; }
+/* unread badge on channel tabs */
+.tab-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #c0392b; color: #fff; font-size: 11px; font-weight: 700; }
+.channel-tab.active .tab-badge { background: rgba(0, 0, 0, .25); }
+/* pricing yearly line */
+.price-yearly { color: var(--text-2); font-size: 13px; font-weight: 600; margin: 4px 0 12px; }
+/* Zuri hero chat widget */
+.zuri-fab { position: fixed; right: 22px; bottom: 22px; z-index: 60; display: flex; align-items: center; gap: 10px; padding: 10px 18px 10px 10px; border: none; border-radius: 999px; background: var(--accent); color: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); cursor: pointer; transition: transform .15s ease; }
+.zuri-fab:hover { transform: translateY(-2px); }
+.zuri-ava { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, #12b57b, #0b8f5c); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; flex-shrink: 0; }
+.zuri-fab .zuri-ava { background: rgba(255, 255, 255, .22); }
+.zuri-fab-label { font-weight: 700; font-size: 14px; }
+.zuri-panel { position: fixed; right: 22px; bottom: 22px; z-index: 60; width: min(380px, calc(100vw - 32px)); height: min(560px, calc(100vh - 80px)); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 18px 50px rgba(0, 0, 0, .32); overflow: hidden; }
+.zuri-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.zuri-head b { font-size: 15px; }
+.zuri-head .muted { display: block; font-size: 11.5px; }
+.zuri-head .icon-btn { margin-left: auto; }
+.zuri-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.zuri-msg { max-width: 85%; padding: 9px 12px; border-radius: 14px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
+.zuri-msg.zuri { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); }
+.zuri-msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.zuri-msg.typing { color: var(--text-2); font-style: italic; }
+.zuri-chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px 4px; }
+.zuri-chips .chip { cursor: pointer; }
+.zuri-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.zuri-input input { flex: 1; }
