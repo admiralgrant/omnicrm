@@ -1,4 +1,4 @@
-// OmniCRM API — auth, contacts, deals, dashboard, AI follow-up engine (v0.1)
+// OmniCRM API, auth, contacts, deals, dashboard, AI follow-up engine (v0.1)
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import bcrypt from 'bcryptjs';
@@ -95,7 +95,7 @@ app.addHook('onRequest', async (req, reply) => {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     if (payload.guest) {
-      return reply.code(403).send({ error: 'Read-only guest session — changes are disabled in this demo.' });
+      return reply.code(403).send({ error: 'Read-only guest session, changes are disabled in this demo.' });
     }
   } catch { /* unauthenticated mutations are handled by route guards */ }
 });
@@ -233,7 +233,7 @@ app.get('/ai/followups', { preHandler: requireAuth }, async (req) => {
     if (c.debt_ngn > 0) {
       draft = `Hello ${c.company ? c.company.split(' ')[0] : c.name}, this is a gentle reminder from your records: a balance of ₦${Number(c.debt_ngn).toLocaleString()} is still outstanding. Kindly confirm when payment can be made. Thank you!`;
     } else {
-      draft = `Hi ${c.name}, just following up on the proposal I sent. Happy to walk you through the tier that suits your needs — 15 minutes is all I would need. Would this week work for a call?`;
+      draft = `Hi ${c.name}, just following up on the proposal I sent. Happy to walk you through the tier that suits your needs, 15 minutes is all I would need. Would this week work for a call?`;
     }
     return { contact_id: c.id, name: c.name, company: c.company, draft, reason: c.next_action || 'follow-up due' };
   });
@@ -344,10 +344,10 @@ function zuriReply(message) {
   const m = String(message || '').toLowerCase();
   const has = (...words) => words.some((w) => m.includes(w));
   if (has('price', 'pricing', 'cost', 'how much', 'fee', 'naira', '₦', '13,999', '13999', 'plan', 'plans', 'subscription', 'pay monthly', 'monthly')) {
-    return "OmniCRM pricing: Start ₦13,999/month, Grow ₦27,999/month, Scale ₦48,999/month. Pay yearly and save 9%: ₦152,869, ₦305,749 and ₦535,069 billed yearly. Every plan begins with a free trial — shall I arrange a demo for your business?";
+    return "OmniCRM pricing: Basic starts at ₦5,999 for your first month, then ₦13,999 a month. Start is ₦24,999, Grow ₦39,999, Scale ₦59,999 monthly. Paying yearly saves you 9%. Every plan begins with a free trial. Shall I arrange a demo for your business?";
   }
   if (has('demo', 'book', 'trial', 'try it', 'schedule', 'see it', 'walk me', 'show me')) {
-    return "A demo takes about 20 minutes and we'll walk through YOUR business workflow. Leave your name and phone number here and the team will call you — or tap Start free on this page to explore a read-only demo right now.";
+    return "A demo takes about 20 minutes and we'll walk through YOUR business workflow. Leave your name and phone number here and the team will call you, or tap Start free on this page to explore a read-only demo right now.";
   }
   if (has('whatsapp', 'instagram', 'tiktok', 'messenger', 'email', 'social', 'channel', 'inbox', 'chat with customer', 'customer chat')) {
     return "OmniCRM brings WhatsApp, Instagram DMs, Facebook Messenger, TikTok DMs and email into ONE inbox. Each customer gets one thread, your team claims enquiries in real time, and unread counts sit on every channel tab.";
@@ -356,22 +356,22 @@ function zuriReply(message) {
     return "Inventory runs itself: record stock in, watch movements, and the system deducts automatically when an order is delivered or an invoice is paid. Daily digests tell your team what arrived and what left.";
   }
   if (has('invoice', 'payment', 'receipt', 'pay', 'billing', 'collect money', 'debtor', 'owed')) {
-    return "Raise branded invoices, share payment links, track who owes you, and watch payments land in your in-app wallet. Reps propose prices, leadership approves, accounts raises the invoice — no leaks.";
+    return "Raise branded invoices, share payment links, track who owes you, and watch payments land in your in-app wallet. Reps propose prices, leadership approves, accounts raises the invoice, no leaks.";
   }
   if (has('ai', 'zuri', 'bot', 'automate', 'automation', 'intelligence')) {
-    return "That's me — Zuri. On the website I answer your questions instantly, and inside the app I draft follow-ups, WhatsApp replies and daily reports so your team moves faster. What would you like to know?";
+    return "That's me, Zuri. On the website I answer your questions instantly, and inside the app I draft follow-ups, WhatsApp replies and daily reports so your team moves faster. What would you like to know?";
   }
   if (has('feature', 'what can', 'what does', 'module', 'hr', 'payroll', 'ads', 'report', 'reports')) {
-    return "OmniCRM covers: sales CRM, multi-channel inbox, invoicing, orders, inventory, expenses, wallet, HR & payroll, Ads Studio, and reports — with departments so staff only see their own work. Which area should I open up?";
+    return "OmniCRM covers: sales CRM, multi-channel inbox, invoicing, orders, inventory, expenses, wallet, HR & payroll, Ads Studio, and reports, with departments so staff only see their own work. Which area should I open up?";
   }
   if (has('human', 'agent', 'real person', 'speak to', 'talk to', 'someone', 'call me', 'contact', 'phone', 'number', 'reach')) {
-    return "Of course — I'll hand you to a real person. Drop your name and phone number here and it goes straight to the OmniCRM team's inbox in the CRM; they'll reply to you right here in this chat, usually within one business day.";
+    return "Of course, I'll hand you to a real person. Drop your name and phone number here and it goes straight to the OmniCRM team's inbox in the CRM; they'll reply to you right here in this chat, usually within one business day.";
   }
   if (has('sign up', 'signup', 'register', 'start', 'get started', 'account', 'create')) {
     return "Tap Start free on this page to create your business account in under a minute. No card needed. You can also just ask me anything else first.";
   }
   if (has('hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'how are you')) {
-    return "Hello! I'm Zuri, OmniCRM's assistant — I answer instantly, 24/7. Ask me about pricing, features, the inbox, inventory, or say Talk to a human.";
+    return "Hello! I'm Zuri, OmniCRM's assistant, I answer instantly, 24/7. Ask me about pricing, features, the inbox, inventory, or say Talk to a human.";
   }
   return "Let me make sure I help with the right thing. I can cover: pricing (from ₦13,999/month), the multi-channel inbox, invoicing, inventory, HR, or booking a demo. Ask one of those, or say Talk to a human and a real person will pick this up.";
 }
@@ -384,7 +384,7 @@ async function zuriBrain(message) {
   // LLM when a key is configured, rules as the always-on fallback
   if (process.env.LLM_API_KEY) {
     const llm = await askLLM(
-      'You are Zuri, the friendly assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm and clear. Pricing: Start N13,999/month, Grow N27,999, Scale N48,999; yearly saves 9%. You cannot book real appointments — collect a name and phone number for handoff.',
+      'You are Zuri, the friendly assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm and clear. Pricing: Start N13,999/month, Grow N27,999, Scale N48,999; yearly saves 9%. You cannot book real appointments, collect a name and phone number for handoff.',
       message
     );
     if (llm) return llm.trim();
@@ -423,9 +423,9 @@ app.post('/zuri/chat', async (req, reply) => {
       db.prepare("INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (1, NULL, 'zuri_handoff', ?)")
         .run(`Human handoff requested: ${name} (${phone})`);
       zuriLog(sid, 'zuri', 'handoff captured');
-      return { reply: `Thank you ${name.split(' ')[0]}! Your details are with the OmniCRM team now — a real person will reply to you right here in this chat. You can keep asking me questions in the meantime.`, session_id: sid };
+      return { reply: `Thank you ${name.split(' ')[0]}! Your details are with the OmniCRM team now, a real person will reply to you right here in this chat. You can keep asking me questions in the meantime.`, session_id: sid };
     }
-    return { reply: "Of course — I'll connect you. Drop your name and phone number here (for example: Chidi 0803 123 4567) and it goes straight to the team's inbox.", session_id: sid };
+    return { reply: "Of course, I'll connect you. Drop your name and phone number here (for example: Chidi 0803 123 4567) and it goes straight to the team's inbox.", session_id: sid };
   }
 
   const answer = await zuriBrain(message);
@@ -449,7 +449,7 @@ app.post('/zuri/lead', async (req, reply) => {
   const info = db.prepare("INSERT INTO contacts (user_id, name, phone, email, tags, source) VALUES (1, ?, ?, ?, 'zuri-lead', 'zuri')")
     .run(name, contact.includes('@') ? null : contact, contact.includes('@') ? contact : null);
   db.prepare("INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (1, NULL, 'zuri_lead', ?)")
-    .run(`New Zuri lead: ${name} (${contact})${note ? ' — ' + note : ''}`);
+    .run(`New Zuri lead: ${name} (${contact})${note ? ', ' + note : ''}`);
   return { ok: true, lead_id: info.lastInsertRowid };
 });
 
@@ -739,9 +739,9 @@ app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
-  // sales reps raise orders, not invoices — only admin/accountant/HR create invoices
+  // sales reps raise orders, not invoices, only admin/accountant/HR create invoices
   if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
-    return reply.code(403).send({ error: 'Only admin or accounts can create invoices — sales reps raise orders instead.' });
+    return reply.code(403).send({ error: 'Only admin or accounts can create invoices, sales reps raise orders instead.' });
   }
   const { contact_id, due_date, items, currency } = req.body || {};
   if (!contact_id || !Array.isArray(items) || items.length === 0) return reply.code(400).send({ error: 'contact_id, due_date and items are required' });
@@ -828,7 +828,7 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
     for (const it of items) {
       if (!(Number(it.qty) > 0)) continue;
       const onHand = db.prepare('SELECT stock FROM products WHERE id = ?').get(it.product_id)?.stock ?? 0;
-      const note = Number(it.qty) > onHand ? `Insufficient stock at payment (had ${onHand}) — investigate` : null;
+      const note = Number(it.qty) > onHand ? `Insufficient stock at payment (had ${onHand}), investigate` : null;
       stockMove(inv.user_id, it.product_id, 'out', Number(it.qty), 'sale', 'invoice', inv.id, note, req.user.staff_id);
     }
     db.prepare('UPDATE invoices SET stock_moved = 1 WHERE id = ?').run(inv.id);
@@ -894,7 +894,7 @@ app.post('/pay/:token/initialize', async (req, reply) => {
 
 // DEMO ONLY: auto-marks the invoice paid. Refuses to run when Paystack is configured.
 app.post('/pay/:token/demo-pay', async (req, reply) => {
-  if (paystackEnabled()) return reply.code(403).send({ error: 'Demo pay disabled — Paystack is live.' });
+  if (paystackEnabled()) return reply.code(403).send({ error: 'Demo pay disabled, Paystack is live.' });
   const inv = db.prepare('SELECT * FROM invoices WHERE pay_token = ?').get(req.params.token);
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
@@ -1092,7 +1092,7 @@ app.get('/ai/report', { preHandler: requireAuth }, async (req, reply) => {
           `${prods.length} SKUs tracked · stock value ₦${Number(stockValue).toLocaleString()} (cost)`,
           `${low.length} low-stock items needing reorder`,
         ],
-        rows: low.map((p) => ({ body: `${p.name} — ${p.stock} left (alert at ${p.low_stock_at})`, status: 'low' })).slice(0, 10),
+        rows: low.map((p) => ({ body: `${p.name}, ${p.stock} left (alert at ${p.low_stock_at})`, status: 'low' })).slice(0, 10),
       });
     } else if (s === 'account') {
       const invsAll = q('SELECT * FROM invoices WHERE user_id = ?', uid);
@@ -1107,7 +1107,7 @@ app.get('/ai/report', { preHandler: requireAuth }, async (req, reply) => {
           `Receivables outstanding: ₦${Number(receivables).toLocaleString()}`,
           `Paystack: ${paystackEnabled() ? 'live' : 'demo mode'} · WhatsApp Cloud API: ${waEnabled() ? 'connected' : 'not connected'} · FX: ${FX_CACHE.source === 'live' ? 'live rates' : 'fallback rates'}`,
         ],
-        rows: invsAll.filter((i) => i.status === 'paid').slice(0, 10).map((i) => ({ body: `${i.number} paid — ${i.currency} ${Number(i.total).toLocaleString()}`, status: i.currency })),
+        rows: invsAll.filter((i) => i.status === 'paid').slice(0, 10).map((i) => ({ body: `${i.number} paid, ${i.currency} ${Number(i.total).toLocaleString()}`, status: i.currency })),
       });
     }
   }
@@ -1175,9 +1175,18 @@ app.post('/webhooks/whatsapp', async (req, reply) => {
 
 // ---- org feature switches (admin) ----
 const TIERS = {
+  basic: {
+    label: 'Basic',
+    price: '₦13,999/mo',
+    trial: '₦5,999 first month',
+    staff_cap: 1,
+    contact_cap: 100,
+    features: ['dashboard', 'customers', 'product', 'inventory', 'invoices', 'expenses'],
+    channels: [],
+  },
   start: {
     label: 'Start',
-    price: '₦13,999/mo',
+    price: '₦24,999/mo',
     staff_cap: 3,
     contact_cap: 500,
     features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail'],
@@ -1185,7 +1194,7 @@ const TIERS = {
   },
   grow: {
     label: 'Grow',
-    price: '₦27,999/mo',
+    price: '₦39,999/mo',
     staff_cap: 10,
     contact_cap: 5000,
     features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat'],
@@ -1193,7 +1202,7 @@ const TIERS = {
   },
   scale: {
     label: 'Scale',
-    price: '₦48,999/mo',
+    price: '₦59,999/mo',
     staff_cap: 0,
     contact_cap: 0,
     features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'hr', 'ads'],
@@ -1223,6 +1232,7 @@ app.get('/org/tier', { preHandler: [requireAuth, gate('dashboard')] }, async (re
     tier,
     label: cfg.label,
     price: cfg.price,
+    trial: cfg.trial || null,
     staff_cap: cfg.staff_cap,
     contact_cap: cfg.contact_cap,
     features: cfg.features,
@@ -1526,7 +1536,7 @@ app.get('/payslips/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
       .text(`${minus ? '−' : ''}₦${Number(val).toLocaleString()}`, 400, y, { width: 130, align: 'right' });
     y += 22;
   }
-  doc.moveDown(2).fontSize(8).fillColor('#888').text('Simplified PAYE — generated by OmniCRM. This is a demo payslip.', { align: 'center' });
+  doc.moveDown(2).fontSize(8).fillColor('#888').text('Simplified PAYE, generated by OmniCRM. This is a demo payslip.', { align: 'center' });
   doc.end();
   return reply.send(await done);
 });
@@ -1654,9 +1664,9 @@ app.post('/stock/in', { preHandler: requireAuth }, async (req, reply) => {
   const newStock = stockMove(req.user.id, prod.id, 'in', n, 'purchase', 'purchase', null, note || 'Stock purchase', req.user.staff_id);
   // real-time ping: sales reps + inventory team so everyone knows it's in
   const reps = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'sales'").all(req.user.id);
-  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `📥 ${n} × ${prod.name} added — ${newStock} on hand.`, { view: 'dashboard', dept: 'inventory' });
+  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `📥 ${n} × ${prod.name} added, ${newStock} on hand.`, { view: 'dashboard', dept: 'inventory' });
   const inv = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'inventory'").all(req.user.id);
-  for (const s of inv) if (s.id !== req.user.staff_id) notify(req.user.id, s.id, 'stock_update', `📥 ${n} × ${prod.name} added — ${newStock} on hand.`, { view: 'inventory' });
+  for (const s of inv) if (s.id !== req.user.staff_id) notify(req.user.id, s.id, 'stock_update', `📥 ${n} × ${prod.name} added, ${newStock} on hand.`, { view: 'inventory' });
   return { ok: true, stock: newStock };
 });
 
@@ -1672,7 +1682,7 @@ app.get('/stock/movements', { preHandler: requireAuth }, async (req) => {
   return { rows };
 });
 
-// internal mail / stock / receipts use the same ops gate as orders — declare it up front
+// internal mail / stock / receipts use the same ops gate as orders, declare it up front
 const isOps = (u) => !u.dept || u.dept === 'account' || u.dept === 'hr';
 const notify = (userId, staffId, kind, message, link) => {
   db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message, link_json) VALUES (?, ?, ?, ?, ?)')
@@ -1904,7 +1914,7 @@ app.post('/stock', { preHandler: requireAuth }, async (req, reply) => {
     .run(req.user.id, product_name, Number(qty_on_hand), req.user.staff_id || null, note || null);
   // notify sales reps there's a fresh stock update
   const reps = db.prepare("SELECT id FROM staff WHERE user_id = ? AND department = 'sales' AND can_login = 1").all(req.user.id);
-  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `Stock updated: ${product_name} — ${Number(qty_on_hand)} on hand.`, { view: 'dashboard', dept: 'inventory' });
+  for (const r of reps) notify(req.user.id, r.id, 'stock_update', `Stock updated: ${product_name}, ${Number(qty_on_hand)} on hand.`, { view: 'dashboard', dept: 'inventory' });
   return { ok: true, id: info.lastInsertRowid };
 });
 
@@ -1963,7 +1973,7 @@ app.post('/receipts/:id/match', { preHandler: requireAuth }, async (req, reply) 
     const order = db.prepare('SELECT id FROM orders WHERE invoice_id = ?').get(invoice_id);
     if (order) {
       db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(`receipt-${r.id}`, order.id);
-      notify(req.user.id, r.staff_id, 'payment_received', `Payment matched for invoice #${invoice_id} — receipt from ${r.payer_name}.`, { view: 'invoices', id: invoice_id });
+      notify(req.user.id, r.staff_id, 'payment_received', `Payment matched for invoice #${invoice_id}, receipt from ${r.payer_name}.`, { view: 'invoices', id: invoice_id });
     }
   }
   return { ok: true };
@@ -2044,7 +2054,7 @@ app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) 
   db.prepare("UPDATE orders SET status = 'approved', invoice_id = ?, approved_at = datetime('now') WHERE id = ?")
     .run(inv.lastInsertRowid, o.id);
   notify(o.user_id, o.staff_id, 'order_approved',
-    `Order #${o.id} approved — invoice ${number} raised for ${contact.company || contact.name}.`,
+    `Order #${o.id} approved, invoice ${number} raised for ${contact.company || contact.name}.`,
     { view: 'orders', id: o.id });
   return { ok: true, invoice: number };
 });
@@ -2071,13 +2081,13 @@ app.post('/orders/:id/deliver', { preHandler: requireAuth }, async (req, reply) 
     for (const it of items) {
       if (!it.product_id || !(Number(it.qty) > 0)) continue;
       const onHand = db.prepare('SELECT stock FROM products WHERE id = ?').get(it.product_id)?.stock ?? 0;
-      const note = Number(it.qty) > onHand ? `Insufficient stock at delivery (had ${onHand}) — investigate` : null;
+      const note = Number(it.qty) > onHand ? `Insufficient stock at delivery (had ${onHand}), investigate` : null;
       stockMove(o.user_id, it.product_id, 'out', Number(it.qty), 'sale', 'order', o.id, note, req.user.staff_id);
     }
     if (o.invoice_id) db.prepare('UPDATE invoices SET stock_moved = 1 WHERE id = ?').run(o.invoice_id);
   }
   notify(o.user_id, o.staff_id, 'order_delivered',
-    `Order #${o.id} delivered — your invoice ${o.invoice_id ? '#' + o.invoice_id : ''} is now visible in your portal.`,
+    `Order #${o.id} delivered, your invoice ${o.invoice_id ? '#' + o.invoice_id : ''} is now visible in your portal.`,
     { view: 'orders', id: o.id });
   return { ok: true };
 });
@@ -2086,7 +2096,7 @@ app.post('/orders/:id/payment', { preHandler: requireAuth }, async (req, reply) 
   if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin/accountant/HR can post payments' });
   const o = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!o) return reply.code(404).send({ error: 'Order not found' });
-  if (o.status !== 'delivered') return reply.code(400).send({ error: `Cannot take payment for an order that is ${o.status} — it must be delivered first` });
+  if (o.status !== 'delivered') return reply.code(400).send({ error: `Cannot take payment for an order that is ${o.status}, it must be delivered first` });
   const { ref } = req.body || {};
   db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(ref || null, o.id);
   if (o.invoice_id) db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ?").run(o.invoice_id);
@@ -2144,7 +2154,7 @@ app.get('/commissions', { preHandler: requireAuth }, async (req) => {
   return { period, rows };
 });
 
-// ---- inventory AI digest: what came in, what was sold, what's low — per period ---- 
+// ---- inventory AI digest: what came in, what was sold, what's low, per period ---- 
 const DIGEST_PERIODS = { daily: 1, weekly: 7, monthly: 30, quarterly: 90, biannual: 182, year: 365 };
 const DIGEST_LABELS = { daily: 'Today', weekly: 'This week', monthly: 'This month', quarterly: 'This quarter', biannual: 'This half-year', year: 'This year' };
 
@@ -2404,7 +2414,7 @@ app.post('/inbox/channels/:channel/disconnect', { preHandler: requireAuth }, asy
   return { ok: true, channel: ch.key, status: 'disconnected' };
 });
 
-// inbound webhooks for Meta (Instagram + Messenger) and TikTok — live once business verification lands
+// inbound webhooks for Meta (Instagram + Messenger) and TikTok, live once business verification lands
 app.post('/webhooks/meta', async (req, reply) => {
   for (const e of req.body?.entry || []) {
     const events = [...(e.messaging || []), ...((e.changes || []).map((c) => c.value))];
