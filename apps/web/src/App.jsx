@@ -2911,10 +2911,10 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
     ['globe', 'Medium & Enterprise', 'Facility managers, distributors, franchises, dashboards for every department.'],
   ];
   const tiers = [
-    ['Basic', '₦13,999', '/month', '₦5,999 first month · ₦152,869/yr (billed yearly)', ['Products & stock levels', 'Invoice generation', 'Expense tracking', '1 user · 100 customer records'], 'Start with Basic'],
-    ['Start', '₦24,999', '/month', '₦272,989/yr (billed yearly)', ['Everything in Basic', 'Full customer CRM & pipeline', 'WhatsApp inbox', 'Follow-ups & community support'], 'Start free trial'],
-    ['Grow', '₦39,999', '/month', '₦436,789/yr (billed yearly)', ['Everything in Start', 'Instagram, Messenger, TikTok & Email inbox', 'Zuri AI drafts + invoicing', 'Inventory, expenses & wallet'], 'Start free trial'],
-    ['Scale', '₦59,999', '/month', '₦655,189/yr (billed yearly)', ['Everything in Grow', 'HR & payroll suite', 'Ads Studio (pay % of ad spend)', 'Priority support'], 'Talk to us'],
+    ['Basic', '₦13,999', '/month', '₦152,869/yr', ['Products & stock levels', 'Invoice generation', 'Expense tracking', '1 user, 100 customer records'], 'Start with Basic'],
+    ['Start', '₦24,999', '/month', '₦272,989/yr', ['Everything in Basic', 'Full customer CRM & pipeline', 'WhatsApp inbox', 'Follow-ups & community support'], 'Start free trial'],
+    ['Grow', '₦39,999', '/month', '₦436,789/yr', ['Everything in Start', 'Instagram, Messenger, TikTok & Email inbox', 'Zuri AI drafts + invoicing', 'Inventory, expenses & wallet'], 'Start free trial'],
+    ['Scale', '₦59,999', '/month', '₦655,189/yr', ['Everything in Grow', 'HR & payroll suite', 'Ads Studio (pay % of ad spend)', 'Priority support'], 'Talk to us'],
   ];
   return (
     <div className="landing">
@@ -2979,7 +2979,11 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
             <div key={name} className="price-card">
               <b className="price-name">{name}</b>
               <div className="price-amt">{price}<span>{per}</span></div>
-              <div className="price-yearly">{yearly}</div>
+              {name === 'Basic' && <div className="price-trial">First month ₦5,999</div>}
+              <div className="price-yearly">
+                <b>{yearly}</b>
+                <span>when paid yearly · save 9%</span>
+              </div>
               <ul>
                 {perks.map((p) => <li key={p}><Icon name="check" size={14} /> {p}</li>)}
               </ul>
