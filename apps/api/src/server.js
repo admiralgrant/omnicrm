@@ -118,6 +118,11 @@ app.get('/contacts', { preHandler: requireAuth }, async (req) => {
 app.post('/contacts', { preHandler: requireAuth }, async (req, reply) => {
   const c = req.body || {};
   if (!c.name && !c.company) return reply.code(400).send({ error: 'name or company is required' });
+  const { cfg } = tierOf(req.user.id);
+  const usage = tierUsage(req.user.id);
+  if (cfg.contact_cap > 0 && usage.contacts >= cfg.contact_cap) {
+    return reply.code(403).send({ error: `Your ${cfg.label} plan includes up to ${cfg.contact_cap.toLocaleString()} contacts. Upgrade to Grow or Scale for more.` });
+  }
   const info = db.prepare(`INSERT INTO contacts (user_id, name, company, phone, email, tags, status, debt_ngn, deal_value_ngn, next_action, next_followup_date, staff_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(req.user.id, c.name || null, c.company || null, c.phone || null, c.email || null, c.tags || 'lead', c.status || 'new',
@@ -1169,13 +1174,67 @@ app.post('/webhooks/whatsapp', async (req, reply) => {
 });
 
 // ---- org feature switches (admin) ----
+const TIERS = {
+  start: {
+    label: 'Start',
+    price: '₦13,999/mo',
+    staff_cap: 3,
+    contact_cap: 500,
+    features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail'],
+    channels: ['whatsapp'],
+  },
+  grow: {
+    label: 'Grow',
+    price: '₦27,999/mo',
+    staff_cap: 10,
+    contact_cap: 5000,
+    features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat'],
+    channels: ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'],
+  },
+  scale: {
+    label: 'Scale',
+    price: '₦48,999/mo',
+    staff_cap: 0,
+    contact_cap: 0,
+    features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'hr', 'ads'],
+    channels: ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'],
+  },
+};
+const tierOf = (userId) => {
+  const row = db.prepare("SELECT value FROM org_settings WHERE user_id = ? AND key = 'tier'").get(userId);
+  const tier = row?.value || 'scale'; // existing orgs default to Scale (unlimited)
+  return { tier, cfg: TIERS[tier] || TIERS.scale };
+};
+const tierFeatures = (userId) => {
+  const { cfg } = tierOf(userId);
+  const map = {};
+  for (const f of cfg.features) map[f] = true;
+  return map;
+};
+const tierUsage = (userId) => ({
+  staff: db.prepare('SELECT COUNT(*) AS n FROM staff WHERE user_id = ?').get(userId).n,
+  contacts: db.prepare('SELECT COUNT(*) AS n FROM contacts WHERE user_id = ?').get(userId).n,
+});
+
+app.get('/org/tier', { preHandler: [requireAuth, gate('dashboard')] }, async (req) => {
+  const { tier, cfg } = tierOf(req.user.id);
+  const usage = tierUsage(req.user.id);
+  return {
+    tier,
+    label: cfg.label,
+    price: cfg.price,
+    staff_cap: cfg.staff_cap,
+    contact_cap: cfg.contact_cap,
+    features: cfg.features,
+    channels: cfg.channels,
+    usage,
+  };
+});
+
 app.get('/org/features', { preHandler: [requireAuth, gate('dashboard')] }, async (req) => {
-  return { features: orgFeatures(req.user.id) || {
-    dashboard: true, customers: true, inbox: true, invoices: true, followups: true,
-    feedback: true, reports: true, ads: true, hr: true, pipeline: true,
-    support: true, inventory: true, product: true, account: true,
-    wallet: true, expenses: true, orders: true, chat: true,
-  } };
+  const base = tierFeatures(req.user.id);
+  const custom = orgFeatures(req.user.id) || {};
+  return { features: { ...base, ...custom } };
 });
 
 app.put('/org/features', { preHandler: requireAuth }, async (req, reply) => {
@@ -1213,6 +1272,11 @@ app.get('/hr-dashboard', { preHandler: [requireAuth, gate('hr')] }, async (req) 
 app.post('/staff', { preHandler: [requireAuth, gate('hr')] }, async (req, reply) => {
   const { name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, password, commission_rate } = req.body || {};
   if (!name) return reply.code(400).send({ error: 'Staff name is required' });
+  const { cfg } = tierOf(req.user.id);
+  const usage = tierUsage(req.user.id);
+  if (cfg.staff_cap > 0 && usage.staff >= cfg.staff_cap) {
+    return reply.code(403).send({ error: `Your ${cfg.label} plan includes up to ${cfg.staff_cap} staff members. Upgrade for more seats.` });
+  }
   const password_hash = password ? bcrypt.hashSync(password, 10) : null;
   const info = db.prepare('INSERT INTO staff (user_id, name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, can_login, password_hash, commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(req.user.id, name, email || null, phone || null, department || 'sales', role || 'Staff', Number(salary) || 0, bank || null, Number(pension_rate ?? 8), hmo_plan || null, onboarding || 'invited', next_of_kin || null, password ? 1 : 0, password_hash, Number(commission_rate ?? 0));
@@ -2241,15 +2305,15 @@ app.get('/expenses', { preHandler: requireAuth }, async (req, reply) => {
   const seeAll = expenseSeeAll(req.user);
   let rows;
   if (from && to) {
-    // range filter, capped at 12 months (server-enforced)
-    const fm = new Date(from + '-01'); const tm = new Date(to + '-01');
-    const span = (tm.getFullYear() - fm.getFullYear()) * 12 + (tm.getMonth() - fm.getMonth());
-    if (span < 0 || span > 11) return reply.code(400).send({ error: 'Range must be within 12 months' });
-    const base = `SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND e.expense_date >= ? AND e.expense_date < ?`;
-    const params = [from + '-01', new Date(tm.getFullYear(), tm.getMonth() + 1, 1).toISOString().slice(0, 10)];
+    // range filter: month (YYYY-MM) or full date (YYYY-MM-DD), capped at 12 months
+    const f = from.length === 7 ? from + '-01' : from;
+    const t = to.length === 7 ? to + '-31' : to;
+    const spanDays = (new Date(t) - new Date(f)) / 86400000;
+    if (spanDays < 0 || spanDays > 365) return reply.code(400).send({ error: 'Range must be within 12 months' });
+    const base = `SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND e.expense_date >= ? AND e.expense_date <= ?`;
     rows = seeAll
-      ? db.prepare(`${base} ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, ...params)
-      : db.prepare(`${base} AND e.staff_id = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, ...params, req.user.staff_id);
+      ? db.prepare(`${base} ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, f, t)
+      : db.prepare(`${base} AND e.staff_id = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, f, t, req.user.staff_id);
   } else if (month) {
     rows = seeAll
       ? db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND strftime('%Y-%m', e.expense_date) = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, month)
@@ -2267,12 +2331,12 @@ app.get('/expenses/report', { preHandler: requireAuth }, async (req, reply) => {
   const { month, from, to } = req.query || {};
   let rows;
   if (from && to) {
-    const fm = new Date(from + '-01'); const tm = new Date(to + '-01');
-    const span = (tm.getFullYear() - fm.getFullYear()) * 12 + (tm.getMonth() - fm.getMonth());
-    if (span < 0 || span > 11) return reply.code(400).send({ error: 'Range must be within 12 months' });
-    const end = new Date(tm.getFullYear(), tm.getMonth() + 1, 1).toISOString().slice(0, 10);
-    rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND expense_date >= ? AND expense_date < ? GROUP BY category ORDER BY total DESC`)
-      .all(req.user.id, from + '-01', end);
+    const f = from.length === 7 ? from + '-01' : from;
+    const t = to.length === 7 ? to + '-31' : to;
+    const spanDays = (new Date(t) - new Date(f)) / 86400000;
+    if (spanDays < 0 || spanDays > 365) return reply.code(400).send({ error: 'Range must be within 12 months' });
+    rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND expense_date >= ? AND expense_date <= ? GROUP BY category ORDER BY total DESC`)
+      .all(req.user.id, f, t);
   } else {
     rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND strftime('%Y-%m', expense_date) = ? GROUP BY category ORDER BY total DESC`).all(req.user.id, month);
   }
@@ -2298,11 +2362,13 @@ const INBOX_CHANNELS = [
 ];
 
 app.get('/inbox/channels', { preHandler: requireAuth }, async (req) => {
+  const { cfg } = tierOf(req.user.id);
+  const allowed = cfg.channels;
   const rows = db.prepare('SELECT * FROM inbox_channels WHERE user_id = ?').all(req.user.id);
   const map = Object.fromEntries(rows.map((r) => [r.channel, r]));
   const unread = db.prepare("SELECT channel, COUNT(*) AS n FROM messages WHERE user_id = ? AND direction = 'in' AND read = 0 GROUP BY channel").all(req.user.id);
   const unreadMap = Object.fromEntries(unread.map((r) => [r.channel, r.n]));
-  const channels = INBOX_CHANNELS.map((c) => {
+  const channels = INBOX_CHANNELS.filter((c) => allowed.includes(c.key)).map((c) => {
     const st = c.key === 'whatsapp' && waEnabled() ? 'connected' : (map[c.key]?.status || 'disconnected');
     return {
       ...c,
@@ -2319,6 +2385,8 @@ app.post('/inbox/channels/:channel/connect', { preHandler: requireAuth }, async 
   if (req.user.dept) return reply.code(403).send({ error: 'Only the organization owner can connect channels.' });
   const ch = INBOX_CHANNELS.find((c) => c.key === req.params.channel);
   if (!ch) return reply.code(404).send({ error: 'Unknown channel' });
+  const { cfg } = tierOf(req.user.id);
+  if (!cfg.channels.includes(ch.key)) return reply.code(403).send({ error: `${ch.label} is not included in your ${cfg.label} plan. Upgrade to unlock it.` });
   const { account_id } = req.body || {};
   db.prepare(`INSERT INTO inbox_channels (user_id, channel, status, account_id, connected_at) VALUES (?, ?, 'connected', ?, datetime('now'))
     ON CONFLICT(user_id, channel) DO UPDATE SET status = 'connected', account_id = excluded.account_id, connected_at = datetime('now'), updated_at = datetime('now')`)
