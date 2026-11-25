@@ -391,12 +391,15 @@ function zuriLog(sessionId, who, body) {
   db.prepare('INSERT INTO zuri_logs (session_id, who, body) VALUES (?, ?, ?)').run(sessionId || null, who, body);
 }
 
-async function zuriBrain(message) {
+async function zuriBrain(message, history) {
   // LLM when a key is configured, rules as the always-on fallback
   if (process.env.LLM_API_KEY) {
+    const context = history?.length
+      ? `Conversation so far (keep continuity, never greet like a new visitor, and apologize if you made a mistake earlier):\n${history}`
+      : 'This is the first message of the conversation.';
     const llm = await askLLM(
-      'You are Zuri, the friendly AI assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm, clear and honest. Never invent features. Pricing: Basic N13,999/month (first month N5,999) for products, inventory, invoices, expenses; Start N24,999 adds the full customer CRM and WhatsApp inbox; Grow N39,999 adds Instagram, Messenger, TikTok and Email inbox plus wallet; Scale N59,999 adds HR, payroll and everything unlimited. Paying yearly saves 9 percent. You cannot book real appointments, collect a name and phone number for handoff. If a visitor is unhappy or confused, apologize briefly and suggest talking to a human.',
-      message
+      `You are Zuri, the friendly AI assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm, clear and honest. Never invent features. Never use emojis. Whenever you ask the visitor to provide something or take an action, ALWAYS include a short concrete example of the expected format, for example "Chidi 0803 123 4567". Pricing: Basic N13,999/month (first month N5,999) for products, inventory, invoices, expenses; Start N24,999 adds the full customer CRM and WhatsApp inbox; Grow N39,999 adds Instagram, Messenger, TikTok and Email inbox plus wallet; Scale N59,999 adds HR, payroll and everything unlimited. Paying yearly saves 9 percent. You cannot book real appointments, collect a name and phone number for handoff. If a visitor is unhappy or confused, apologize briefly and suggest talking to a human.\n\n${context}\n\nVisitor: ${message}`,
+      'You are Zuri, OmniCRM\'s assistant. Reply to the visitor message.',
     );
     if (llm) return llm.trim();
   }
@@ -421,14 +424,14 @@ app.post('/zuri/chat', async (req, reply) => {
     let contactId = sess?.contact_id;
     if (!contactId) {
       const info = db.prepare("INSERT INTO contacts (user_id, name, phone, email, tags, source) VALUES (1, ?, ?, ?, 'zuri-lead', 'zuri')")
-        .run('Website visitor', null, null);
+        .run('New visitor', null, null);
       contactId = info.lastInsertRowid;
       db.prepare('INSERT INTO zuri_sessions (id, contact_id) VALUES (?, ?)').run(sid, contactId);
     }
     if (digits) {
       const phone = (String(message).match(/[\d+\s-]{7,}/) || [''])[0];
       const before = String(message).split(phone)[0];
-      const name = before.replace(/[^a-zA-Z ,.'-]/g, '').trim().slice(0, 60) || 'Website visitor';
+      const name = before.replace(/[^a-zA-Z ,.'-]/g, '').trim().slice(0, 60) || 'New visitor';
       db.prepare('UPDATE contacts SET phone = ?, name = ? WHERE id = ?').run(phone, name, contactId);
       db.prepare('UPDATE zuri_sessions SET contact = ? WHERE id = ?').run(phone, sid);
       db.prepare("INSERT INTO messages (user_id, contact_id, direction, body, status, read, channel) VALUES (1, ?, 'in', ?, 'received', 0, 'web')")
@@ -441,7 +444,10 @@ app.post('/zuri/chat', async (req, reply) => {
     return { reply: "Of course, I'll connect you. Drop your name and phone number here (for example: Chidi 0803 123 4567) and it goes straight to the team's inbox.", session_id: sid };
   }
 
-  const answer = recent > 25 ? zuriReply(message) : await zuriBrain(message);
+  const answer = recent > 25 ? zuriReply(message) : await zuriBrain(message, recent > 25 ? null : (() => {
+    const hist = db.prepare("SELECT who, body FROM zuri_logs WHERE session_id = ? AND who IN ('visitor', 'zuri') AND body != 'handoff captured' ORDER BY id DESC LIMIT 8").all(sid);
+    return hist.reverse().map((h) => `${h.who === 'visitor' ? 'Visitor' : 'Zuri'}: ${h.body}`).join('\n');
+  })());
   zuriLog(sid, 'zuri', answer);
   return { reply: answer, session_id: sid };
 });
