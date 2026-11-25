@@ -2178,36 +2178,66 @@ export default function App() {
                   <p className="muted fx-hint">1 {newInv.currency} ≈ {fmt(fx.rates[newInv.currency])} · {fx.source === 'live' ? 'live rate' : 'offline rate'}, books stay in naira automatically</p>
                 )}
                 <label className="inv-label">Items</label>
+                <p className="muted" style={{ margin: '4px 0 8px' }}>Pick from your products, or type a custom line.</p>
                 {newInv.items.map((it, idx) => (
-                  <div key={idx} className="inv-item-row">
-                    <input
-                      placeholder="Description"
-                      value={it.description}
-                      onChange={(e) => {
-                        const items = [...newInv.items];
-                        items[idx] = { ...it, description: e.target.value };
-                        setNewInv({ ...newInv, items });
-                      }}
-                    />
-                    <input
-                      type="number" min="1" placeholder="Qty" style={{ width: 64 }}
-                      value={it.qty}
-                      onChange={(e) => {
-                        const items = [...newInv.items];
-                        items[idx] = { ...it, qty: e.target.value };
-                        setNewInv({ ...newInv, items });
-                      }}
-                    />
-                    <input
-                      type="number" min="0" placeholder="Unit ₦" style={{ width: 100 }}
-                      value={it.unit_price}
-                      onChange={(e) => {
-                        const items = [...newInv.items];
-                        items[idx] = { ...it, unit_price: e.target.value };
-                        setNewInv({ ...newInv, items });
-                      }}
-                    />
-                    <button className="btn-ghost sm" onClick={() => setNewInv({ ...newInv, items: newInv.items.filter((_, j) => j !== idx) })}>✕</button>
+                  <div key={idx} className="order-line">
+                    <div className="inv-field">
+                      <label className="inv-label" style={{ marginTop: 0 }}>Product</label>
+                      <select
+                        value={it.product_id || ''}
+                        onChange={(e) => {
+                          const items = [...newInv.items];
+                          const p = products.find((x) => x.id === Number(e.target.value));
+                          items[idx] = {
+                            ...it,
+                            product_id: p ? p.id : '',
+                            description: p ? p.name : it.description,
+                            unit_price: p && p.unit_price ? String(p.unit_price) : it.unit_price,
+                          };
+                          setNewInv({ ...newInv, items });
+                        }}
+                      >
+                        <option value="">Pick from catalog…</option>
+                        {products.map((p) => <option key={p.id} value={p.id}>{p.name} · ₦{p.unit_price}</option>)}
+                      </select>
+                    </div>
+                    <div className="inv-field">
+                      <label className="inv-label" style={{ marginTop: 0 }}>Description</label>
+                      <input
+                        placeholder="Description"
+                        value={it.description}
+                        onChange={(e) => {
+                          const items = [...newInv.items];
+                          items[idx] = { ...it, description: e.target.value };
+                          setNewInv({ ...newInv, items });
+                        }}
+                      />
+                    </div>
+                    <div className="inv-field">
+                      <label className="inv-label" style={{ marginTop: 0 }}>Quantity</label>
+                      <input
+                        type="number" min="1" placeholder="Qty" style={{ width: 90 }}
+                        value={it.qty}
+                        onChange={(e) => {
+                          const items = [...newInv.items];
+                          items[idx] = { ...it, qty: e.target.value };
+                          setNewInv({ ...newInv, items });
+                        }}
+                      />
+                    </div>
+                    <div className="inv-field">
+                      <label className="inv-label" style={{ marginTop: 0 }}>Unit price ₦</label>
+                      <input
+                        type="number" min="0" placeholder="Unit ₦" style={{ width: 130 }}
+                        value={it.unit_price}
+                        onChange={(e) => {
+                          const items = [...newInv.items];
+                          items[idx] = { ...it, unit_price: e.target.value };
+                          setNewInv({ ...newInv, items });
+                        }}
+                      />
+                    </div>
+                    <button className="btn-ghost sm remove-line" onClick={() => setNewInv({ ...newInv, items: newInv.items.filter((_, j) => j !== idx) })}>Remove</button>
                   </div>
                 ))}
                 <button className="btn-ghost sm" onClick={() => setNewInv({ ...newInv, items: [...newInv.items, { description: '', qty: 1, unit_price: '' }] })}>+ Add item</button>
