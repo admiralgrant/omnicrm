@@ -39,6 +39,8 @@ export default function App() {
   const [expenseData, setExpenseData] = useState({ expenses: [], categories: [], see_all: false });
   const [expenseForm, setExpenseForm] = useState(null);
   const [expenseMonth, setExpenseMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [expenseFrom, setExpenseFrom] = useState('');
+  const [expenseTo, setExpenseTo] = useState('');
   const [expenseReport, setExpenseReport] = useState(null);
   const [inboxChannels, setInboxChannels] = useState([]);
   const [inboxChannel, setInboxChannel] = useState('whatsapp');
@@ -227,6 +229,31 @@ export default function App() {
     return () => { alive = false; clearInterval(iv); };
   }, [token]);
 
+  // real-time inbox: refresh threads + channel unread counts while the inbox is open
+  const inboxViewRef = React.useRef(view);
+  inboxViewRef.current = view;
+  const activeContactRef = React.useRef(activeContact);
+  activeContactRef.current = activeContact;
+  const inboxChannelRef = React.useRef(inboxChannel);
+  inboxChannelRef.current = inboxChannel;
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    const poll = async () => {
+      if (inboxViewRef.current !== 'inbox') return;
+      try {
+        await refreshInbox();
+        if (activeContactRef.current) {
+          const q = inboxChannelRef.current !== 'whatsapp' ? `&channel=${inboxChannelRef.current}` : '';
+          const m = await api(`/messages?contact_id=${activeContactRef.current.contact_id}${q}`);
+          if (alive) setMsgs(m.messages);
+        }
+      } catch { /* offline */ }
+    };
+    const iv = setInterval(poll, 6000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [token]);
+
   const chatWatermarksRef = React.useRef(chatWatermarks);
   chatWatermarksRef.current = chatWatermarks;
   const activeConvRef = React.useRef(activeConv);
@@ -310,12 +337,22 @@ export default function App() {
     );
   }
 
+  const refreshInbox = async () => {
+    try {
+      const [t, ch] = await Promise.all([api('/inbox'), api('/inbox/channels')]);
+      setThreads(t.threads); setInboxChannels(ch.channels || []);
+    } catch { /* offline */ }
+  };
   const openThread = async (t) => {
     setActiveContact(t);
     setDraft('');
     const q = inboxChannel !== 'whatsapp' ? `&channel=${inboxChannel}` : '';
     const d = await api(`/messages?contact_id=${t.contact_id}${q}`);
     setMsgs(d.messages);
+    try {
+      await api(`/messages/contact/${t.contact_id}/read`, { method: 'POST', body: '{}' });
+      refreshInbox();
+    } catch { /* guest */ }
   };
   const getDraft = async () => {
     const d = await api(`/ai/draft?contact_id=${activeContact.contact_id}`);
@@ -738,7 +775,7 @@ export default function App() {
                 </div>
                 {followups.length > 0 && (
                   <div className="card">
-                    <h3><Icon name="sparkles" size={14} /> AI Follow-ups ready</h3>
+                    <h3><Icon name="sparkles" size={14} /> Zuri follow-ups ready</h3>
                     {followups.map((f) => (
                       <div key={f.contact_id} className="followup">
                         <b>{f.company || f.name}</b>
@@ -1666,7 +1703,7 @@ export default function App() {
         {view === 'inbox' && (
           <div className="card inbox">
             <div className="channel-tabs">
-              {(inboxChannels.length ? inboxChannels : [{ key: 'whatsapp', label: 'WhatsApp', status: 'connected' }, { key: 'instagram', label: 'Instagram', status: 'disconnected' }, { key: 'messenger', label: 'Facebook Messenger', status: 'disconnected' }, { key: 'tiktok', label: 'TikTok', status: 'disconnected' }]).map((ch) => (
+              {(inboxChannels.length ? inboxChannels : [{ key: 'whatsapp', label: 'WhatsApp', status: 'connected', unread: 0 }, { key: 'instagram', label: 'Instagram', status: 'disconnected', unread: 0 }, { key: 'messenger', label: 'Facebook Messenger', status: 'disconnected', unread: 0 }, { key: 'tiktok', label: 'TikTok', status: 'disconnected', unread: 0 }, { key: 'email', label: 'Email', status: 'disconnected', unread: 0 }]).map((ch) => (
                 <button
                   key={ch.key}
                   className={`channel-tab ${inboxChannel === ch.key ? 'active' : ''}`}
@@ -1674,19 +1711,23 @@ export default function App() {
                 >
                   {ch.label}
                   <span className={`dot ${ch.status === 'connected' ? 'on' : ''}`} />
+                  {ch.unread > 0 && <span className="tab-badge">{ch.unread}</span>}
                 </button>
               ))}
             </div>
             {inboxChannel !== 'whatsapp' && (() => {
               const ch = inboxChannels.find((c) => c.key === inboxChannel);
               const connected = ch?.status === 'connected';
+              const isEmail = inboxChannel === 'email';
               return !connected ? (
                 <div className="connect-card">
                   <h3><Icon name="chat" size={14} /> Connect {ch?.label || inboxChannel}</h3>
-                  <p className="muted">Live {ch?.label || inboxChannel} messages flow into this inbox once business verification clears with {inboxChannel === 'tiktok' ? 'TikTok Business Messaging' : 'Meta Business Suite'}. Enter the account ID to stage the connection now — inbound webhooks are already wired.</p>
+                  <p className="muted">{isEmail
+                    ? 'Enter the mailbox address you want customer emails to land in. Inbound emails flow into this inbox once SMTP/IMAP credentials are added on the server.'
+                    : `Live ${ch?.label || inboxChannel} messages flow into this inbox once business verification clears with ${inboxChannel === 'tiktok' ? 'TikTok Business Messaging' : 'Meta Business Suite'}. Enter the account ID to stage the connection now — inbound webhooks are already wired.`}</p>
                   {!isGuest && !me?.dept && (
                     <div className="quick-actions" style={{ marginTop: 6 }}>
-                      <input placeholder="Account / page ID" value={ch?.account_id || ''} onChange={(e) => setInboxChannels(inboxChannels.map((c) => c.key === inboxChannel ? { ...c, account_id: e.target.value } : c))} />
+                      <input placeholder={isEmail ? 'Email address' : 'Account / page ID'} value={ch?.account_id || ''} onChange={(e) => setInboxChannels(inboxChannels.map((c) => c.key === inboxChannel ? { ...c, account_id: e.target.value } : c))} />
                       <button className="btn-primary sm" onClick={async () => {
                         const acc = inboxChannels.find((c) => c.key === inboxChannel)?.account_id || '';
                         await api(`/inbox/channels/${inboxChannel}/connect`, { method: 'POST', body: JSON.stringify({ account_id: acc }) });
@@ -1703,7 +1744,7 @@ export default function App() {
                     <div key={t.contact_id} className="thread" onClick={() => openThread(t)}>
                       <div className="thread-ava">{((t.company || t.name) || '?')[0]}</div>
                       <div className="thread-info">
-                        <b>{t.company || t.name}</b>
+                        <b>{t.company || t.name}{t.assignee_name ? <span className="chip draft" style={{ marginLeft: 6 }}>with {t.assignee_name.split(' ')[0]}</span> : null}</b>
                         <span>{t.last_message}</span>
                       </div>
                       {t.unread > 0 && <div className="unread-badge">{t.unread}</div>}
@@ -1721,10 +1762,15 @@ export default function App() {
                   <div key={t.contact_id} className="thread" onClick={() => openThread(t)}>
                     <div className="thread-ava">{((t.company || t.name) || '?')[0]}</div>
                     <div className="thread-info">
-                      <b>{t.company || t.name}</b>
+                      <b>{t.company || t.name}{t.assignee_name ? <span className="chip draft" style={{ marginLeft: 6 }}>with {t.assignee_name.split(' ')[0]}</span> : null}</b>
                       <span>{t.last_message}</span>
                     </div>
-                    {t.unread > 0 && <div className="unread-badge">{t.unread}</div>}
+                    <span className="quick-actions" style={{ marginTop: 0 }}>
+                      {!t.support_assignee && !isGuest && me?.staff_id && (
+                        <button className="btn-ghost sm" onClick={async (e) => { e.stopPropagation(); await api('/support/claim', { method: 'POST', body: JSON.stringify({ contact_id: t.contact_id }) }); await refreshInbox(); }}>Claim</button>
+                      )}
+                      {t.unread > 0 && <div className="unread-badge">{t.unread}</div>}
+                    </span>
                   </div>
                 ))}
               </>
@@ -1751,7 +1797,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="composer">
-                  {!isGuest && <button className="btn-ghost sm" onClick={getDraft}><Icon name="sparkles" size={14} /> AI Draft</button>}
+                  {!isGuest && <button className="btn-ghost sm" onClick={getDraft}><Icon name="sparkles" size={14} /> Zuri draft</button>}
                   <input
                     placeholder={isGuest ? 'Read-only guest mode, sending is disabled' : 'Type a message…'}
                     value={composer}
@@ -2418,24 +2464,35 @@ export default function App() {
             {expenseData.see_all && (
               <div className="kpis" style={{ marginTop: 14 }}>
                 <div className="kpi">
-                  <div className="label">Month total</div>
-                  <div className="value">{fmt(expenseReport?.total ?? (expenseData.expenses || []).filter((e) => (e.expense_date || '').startsWith(expenseMonth)).reduce((s, e) => s + (e.amount_ngn || 0), 0))}</div>
+                  <div className="label">{expenseFrom && expenseTo ? 'Range total' : 'Month total'}</div>
+                  <div className="value">{fmt(expenseReport?.total ?? (expenseData.expenses || []).reduce((s, e) => s + (e.amount_ngn || 0), 0))}</div>
                 </div>
                 <div className="kpi">
                   <div className="label">Entries</div>
-                  <div className="value">{(expenseData.expenses || []).filter((e) => (e.expense_date || '').startsWith(expenseMonth)).length}</div>
+                  <div className="value">{(expenseData.expenses || []).length}</div>
                 </div>
               </div>
             )}
             <div className="inv-head" style={{ marginTop: 10 }}>
-              <span className="muted">Filter month</span>
-              <input type="month" value={expenseMonth} onChange={async (e) => {
-                setExpenseMonth(e.target.value);
-                setExpenseData(await api(`/expenses?month=${e.target.value}`));
-                if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?month=${e.target.value}`));
-              }} />
+              <span className="muted">Filter range (up to 12 months)</span>
+              <div className="quick-actions" style={{ marginTop: 0 }}>
+                <input type="month" value={expenseFrom} max={expenseTo} onChange={(e) => setExpenseFrom(e.target.value)} />
+                <span className="muted">to</span>
+                <input type="month" value={expenseTo} min={expenseFrom} onChange={(e) => setExpenseTo(e.target.value)} />
+                <button className="btn-ghost sm" onClick={async () => {
+                  const to = new Date(); const from = new Date(to.getFullYear(), to.getMonth() - 11, 1);
+                  setExpenseFrom(from.toISOString().slice(0, 7)); setExpenseTo(to.toISOString().slice(0, 7));
+                  setExpenseData(await api(`/expenses?from=${from.toISOString().slice(0, 7)}&to=${to.toISOString().slice(0, 7)}`));
+                  if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?from=${from.toISOString().slice(0, 7)}&to=${to.toISOString().slice(0, 7)}`));
+                }}>Last 12 months</button>
+                <button className="btn-primary sm" onClick={async () => {
+                  if (!expenseFrom || !expenseTo) { alert('Pick both months'); return; }
+                  setExpenseData(await api(`/expenses?from=${expenseFrom}&to=${expenseTo}`));
+                  if (expenseData.see_all) setExpenseReport(await api(`/expenses/report?from=${expenseFrom}&to=${expenseTo}`));
+                }}>Apply</button>
+              </div>
             </div>
-            {(expenseData.expenses || []).filter((e) => (e.expense_date || '').startsWith(expenseMonth)).map((e) => (
+            {(expenseData.expenses || []).filter((e) => (!expenseFrom || (e.expense_date || '') >= expenseFrom + '-01') && (!expenseTo || (e.expense_date || '') <= expenseTo + '-31')).map((e) => (
               <div key={e.id} className="inv-row">
                 <div className="thread-ava"><Icon name="receipt" size={15} /></div>
                 <div className="thread-info">
@@ -2456,7 +2513,7 @@ export default function App() {
             ))}
             {expenseData.see_all && expenseReport?.by_category?.length > 0 && (
               <>
-                <h3 style={{ marginTop: 16 }}><Icon name="chart" size={14} /> {expenseMonth} by category</h3>
+                <h3 style={{ marginTop: 16 }}><Icon name="chart" size={14} /> {expenseReport.month || expenseMonth} by category</h3>
                 {expenseReport.by_category.map((r) => (
                   <div key={r.category} className="inv-line">
                     <span>{r.category} <span className="muted">× {r.n}</span></span>
@@ -2777,6 +2834,34 @@ function SuperAdminApp() {
 }
 
 function Landing({ onLogin, onStart, theme, onToggleTheme }) {
+  const [zuriOpen, setZuriOpen] = useState(false);
+  const [zuriMsgs, setZuriMsgs] = useState([{ who: 'zuri', text: "Hello! I'm Zuri, OmniCRM's assistant. Ask me about pricing, features, or book a demo — I reply instantly, 24/7." }]);
+  const [zuriInput, setZuriInput] = useState('');
+  const [zuriBusy, setZuriBusy] = useState(false);
+  const zuriSend = async (text) => {
+    const msg = (text ?? zuriInput).trim();
+    if (!msg || zuriBusy) return;
+    setZuriInput('');
+    setZuriMsgs((m) => [...m, { who: 'user', text: msg }]);
+    setZuriBusy(true);
+    try {
+      const r = await fetch(`${API}/zuri/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) });
+      const d = await r.json();
+      setTimeout(() => {
+        setZuriMsgs((m) => [...m, { who: 'zuri', text: d.reply || 'Sorry, I could not process that. Try asking about pricing or a demo.' }]);
+        setZuriBusy(false);
+      }, 550);
+      // capture leads: message looks like a name + phone number
+      const digits = (msg.match(/\d/g) || []).length;
+      if (digits >= 7) {
+        fetch(`${API}/zuri/lead`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: msg.replace(/\d+/g, '').trim().slice(0, 60) || 'Zuri lead', contact: (msg.match(/[\d+\s-]{7,}/) || [''])[0], note: 'From hero chat' }) }).catch(() => {});
+      }
+    } catch {
+      setTimeout(() => { setZuriMsgs((m) => [...m, { who: 'zuri', text: "I'm having a moment — try again in a few seconds, or start free and explore the app directly." }]); setZuriBusy(false); }, 550);
+    }
+  };
+  const zuriChips = ['Pricing', 'Features', 'Book a demo', 'Talk to a human'];
+
   const features = [
     ['trend', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
     ['chat', 'WhatsApp AI Inbox', 'One inbox for every customer chat, the AI drafts, you approve and send.'],
@@ -2791,10 +2876,9 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
     ['globe', 'Medium & Enterprise', 'Facility managers, distributors, franchises, dashboards for every department.'],
   ];
   const tiers = [
-    ['Starter', '₦0', 'forever', ['Up to 100 contacts', 'WhatsApp inbox', '5 AI follow-ups / day', 'Community support'], 'Start free'],
-    ['Growth', '₦9,900', '/month', ['Everything in Starter', 'Unlimited contacts', 'AI drafts + invoicing', 'Inventory & support desk'], 'Start free trial'],
-    ['Pro', '₦24,900', '/month', ['Everything in Growth', 'Ads Studio (10% of spend)', 'Multi-user & departments', 'Priority support'], 'Start free trial'],
-    ['Enterprise', 'Custom', 'tailored', ['Unlimited everything', 'Dedicated analyst', 'API access & SSO', 'SLA & onboarding'], 'Talk to us'],
+    ['Start', '₦13,999', '/month', '₦152,869/yr (billed yearly)', ['Contacts, deals & pipeline', 'WhatsApp inbox', 'Invoicing & payment links', 'Follow-ups & community support'], 'Start free trial'],
+    ['Grow', '₦27,999', '/month', '₦305,749/yr (billed yearly)', ['Everything in Start', 'Instagram, Messenger, TikTok & Email inbox', 'Zuri AI drafts + invoicing', 'Inventory, expenses & wallet'], 'Start free trial'],
+    ['Scale', '₦48,999', '/month', '₦535,069/yr (billed yearly)', ['Everything in Grow', 'Ads Studio (pay % of ad spend)', 'Departments, HR & payroll', 'Priority support'], 'Talk to us'],
   ];
   return (
     <div className="landing">
@@ -2853,15 +2937,17 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
 
       <section id="pricing" className="landing-section">
         <h2>Simple pricing, honest money</h2>
+        <p className="muted" style={{ marginTop: -8 }}>From <b>₦13,999/month</b> — pay yearly and save 9%.</p>
         <div className="price-grid">
-          {tiers.map(([name, price, per, perks, cta]) => (
+          {tiers.map(([name, price, per, yearly, perks, cta]) => (
             <div key={name} className="price-card">
               <b className="price-name">{name}</b>
               <div className="price-amt">{price}<span>{per}</span></div>
+              <div className="price-yearly">{yearly}</div>
               <ul>
                 {perks.map((p) => <li key={p}><Icon name="check" size={14} /> {p}</li>)}
               </ul>
-              <button className={name === 'Pro' ? 'btn-primary' : 'btn-ghost'} onClick={onStart}>{cta}</button>
+              <button className={name === 'Grow' ? 'btn-primary' : 'btn-ghost'} onClick={onStart}>{cta}</button>
             </div>
           ))}
         </div>
@@ -2873,6 +2959,42 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
         <p className="muted">Made for Nigerian businesses · Lagos, Nigeria</p>
         <p className="muted">© 2026 OmniCRM · <a href="/privacy.html" style={{ color: 'inherit' }}>Privacy & AI Disclosure</a></p>
       </footer>
+
+      {zuriOpen ? (
+        <div className="zuri-panel">
+          <div className="zuri-head">
+            <div className="zuri-ava">Z</div>
+            <div>
+              <b>Zuri</b>
+              <span className="muted">OmniCRM assistant · replies instantly</span>
+            </div>
+            <button className="icon-btn" onClick={() => setZuriOpen(false)} aria-label="Close chat"><Icon name="x" size={16} /></button>
+          </div>
+          <div className="zuri-body">
+            {zuriMsgs.map((m, i) => (
+              <div key={i} className={`zuri-msg ${m.who}`}>{m.text}</div>
+            ))}
+            {zuriBusy && <div className="zuri-msg zuri typing">Zuri is typing…</div>}
+          </div>
+          <div className="zuri-chips">
+            {zuriChips.map((c) => <button key={c} className="chip" onClick={() => zuriSend(c)}>{c}</button>)}
+          </div>
+          <div className="zuri-input">
+            <input
+              placeholder="Type your question…"
+              value={zuriInput}
+              onChange={(e) => setZuriInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') zuriSend(); }}
+            />
+            <button className="btn-primary sm" onClick={() => zuriSend()}><Icon name="send" size={14} /></button>
+          </div>
+        </div>
+      ) : (
+        <button className="zuri-fab" onClick={() => setZuriOpen(true)} aria-label="Chat with Zuri">
+          <span className="zuri-ava">Z</span>
+          <span className="zuri-fab-label">Chat with Zuri</span>
+        </button>
+      )}
     </div>
   );
 }
