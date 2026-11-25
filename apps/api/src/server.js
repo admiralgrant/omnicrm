@@ -740,8 +740,8 @@ app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
     db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(inv.id);
     for (const it of items) {
       const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
-      db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
-        .run(inv.id, it.description || 'Item', qty, up, qty * up);
+      db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(inv.id, it.description || 'Item', qty, up, qty * up, it.product_id || null);
     }
   }
   const currentItems = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
@@ -779,14 +779,15 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const grandTotal = total + fee;
   const ngnTotal = Math.round(grandTotal * rate);
   const year = new Date().getFullYear();
-  const count = db.prepare("SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND number LIKE ?").get(req.user.id, `INV-${year}-%`).c;
-  const number = `INV-${year}-${String(count + 1).padStart(3, '0')}`;
+  const maxRow = db.prepare("SELECT number FROM invoices WHERE user_id = ? AND number LIKE ? ORDER BY number DESC LIMIT 1").get(req.user.id, `INV-${year}-%`);
+  const lastNum = maxRow ? (parseInt(String(maxRow.number).split('-').pop(), 10) || 0) : 0;
+  const number = `INV-${year}-${String(lastNum + 1).padStart(3, '0')}`;
   const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token, currency, fx_rate, ngn_total, fee_rate, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID(), cur, rate, ngnTotal, feeRate, fee);
   for (const it of items) {
     const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
-    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?)')
-      .run(info.lastInsertRowid, it.description || 'Item', qty, up, qty * up);
+    db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(info.lastInsertRowid, it.description || 'Item', qty, up, qty * up, it.product_id || null);
   }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(info.lastInsertRowid);
   return { invoice: inv };
