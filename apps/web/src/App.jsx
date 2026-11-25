@@ -1735,7 +1735,7 @@ export default function App() {
                   <h3><Icon name="chat" size={14} /> Connect {ch?.label || inboxChannel}</h3>
                   <p className="muted">{isEmail
                     ? 'Enter the mailbox address you want customer emails to land in. Inbound emails flow into this inbox once SMTP/IMAP credentials are added on the server.'
-                    : `Live ${ch?.label || inboxChannel} messages flow into this inbox once business verification clears with ${inboxChannel === 'tiktok' ? 'TikTok Business Messaging' : 'Meta Business Suite'}. Enter the account ID to stage the connection now — inbound webhooks are already wired.`}</p>
+                    : `Live ${ch?.label || inboxChannel} messages flow into this inbox once business verification clears with ${inboxChannel === 'tiktok' ? 'TikTok Business Messaging' : 'Meta Business Suite'}. Enter the account ID to stage the connection now, inbound webhooks are already wired.`}</p>
                   {!isGuest && !me?.dept && (
                     <div className="quick-actions" style={{ marginTop: 6 }}>
                       <input placeholder={isEmail ? 'Email address' : 'Account / page ID'} value={ch?.account_id || ''} onChange={(e) => setInboxChannels(inboxChannels.map((c) => c.key === inboxChannel ? { ...c, account_id: e.target.value } : c))} />
@@ -2847,7 +2847,7 @@ function SuperAdminApp() {
 
 function Landing({ onLogin, onStart, theme, onToggleTheme }) {
   const [zuriOpen, setZuriOpen] = useState(false);
-  const [zuriMsgs, setZuriMsgs] = useState([{ who: 'zuri', text: "Hello! I'm Zuri, OmniCRM's assistant. Ask me about pricing, features, or book a demo — I reply instantly, 24/7." }]);
+  const [zuriMsgs, setZuriMsgs] = useState([{ who: 'zuri', text: "Hello! I'm Zuri, OmniCRM's assistant. Ask me about pricing, features, or book a demo, I reply instantly, 24/7." }]);
   const [zuriInput, setZuriInput] = useState('');
   const [zuriBusy, setZuriBusy] = useState(false);
   const zuriSend = async (text) => {
@@ -2866,7 +2866,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
         setZuriBusy(false);
       }, 550);
     } catch {
-      setTimeout(() => { setZuriMsgs((m) => [...m, { who: 'zuri', text: "I'm having a moment — try again in a few seconds, or start free and explore the app directly." }]); setZuriBusy(false); }, 550);
+      setTimeout(() => { setZuriMsgs((m) => [...m, { who: 'zuri', text: "I'm having a moment, try again in a few seconds, or start free and explore the app directly." }]); setZuriBusy(false); }, 550);
     }
   };
   const zuriChips = ['Pricing', 'Features', 'Book a demo', 'Talk to a human'];
@@ -2897,13 +2897,13 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
 
   const features = [
     ['trend', 'Sales CRM', 'Pipeline, follow-ups and Zuri-drafted messages that close deals while you sleep.'],
-    ['chat', 'Unified Inbox', 'WhatsApp, Instagram, Messenger, TikTok and email — one thread per customer, unread badges on every channel.'],
-    ['users', 'Support Desk', 'Your whole team handles enquiries at once — claim, respond in real time, never collide.'],
+    ['chat', 'Unified Inbox', 'WhatsApp, Instagram, Messenger, TikTok and email, one thread per customer, unread badges on every channel.'],
+    ['users', 'Support Desk', 'Your whole team handles enquiries at once, claim, respond in real time, never collide.'],
     ['package', 'Self-Updating Inventory', 'Stock deductions the moment an order is delivered or an invoice is paid, plus daily digests.'],
     ['receipt', 'Invoicing & Wallet', 'Branded invoices, payment links, a live wallet ledger and expenses with date-range reports.'],
     ['sparkles', 'Zuri AI', 'Your built-in assistant: drafts replies, chases follow-ups and chats with website visitors 24/7.'],
     ['briefcase', 'HR Suite', 'Staff, onboarding, payroll, advances, pension, HMO, leave and attendance in one panel.'],
-    ['megaphone', 'Ads Studio', 'AI-planned Meta and Google ads with live ROI — pay only a percentage of ad spend.'],
+    ['megaphone', 'Ads Studio', 'AI-planned Meta and Google ads with live ROI, pay only a percentage of ad spend.'],
   ];
   const cats = [
     ['building', 'Nano & Micro', 'Corner shops, side hustles, digital tools at naira prices, nothing to learn.'],
@@ -2911,9 +2911,10 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
     ['globe', 'Medium & Enterprise', 'Facility managers, distributors, franchises, dashboards for every department.'],
   ];
   const tiers = [
-    ['Start', '₦13,999', '/month', '₦152,869/yr (billed yearly)', ['Contacts, deals & pipeline', 'WhatsApp inbox', 'Invoicing & payment links', 'Follow-ups & community support'], 'Start free trial'],
-    ['Grow', '₦27,999', '/month', '₦305,749/yr (billed yearly)', ['Everything in Start', 'Instagram, Messenger, TikTok & Email inbox', 'Zuri AI drafts + invoicing', 'Inventory, expenses & wallet'], 'Start free trial'],
-    ['Scale', '₦48,999', '/month', '₦535,069/yr (billed yearly)', ['Everything in Grow', 'Ads Studio (pay % of ad spend)', 'Departments, HR & payroll', 'Priority support'], 'Talk to us'],
+    ['Basic', '₦13,999', '/month', '₦5,999 first month · ₦152,869/yr (billed yearly)', ['Products & stock levels', 'Invoice generation', 'Expense tracking', '1 user · 100 customer records'], 'Start with Basic'],
+    ['Start', '₦24,999', '/month', '₦272,989/yr (billed yearly)', ['Everything in Basic', 'Full customer CRM & pipeline', 'WhatsApp inbox', 'Follow-ups & community support'], 'Start free trial'],
+    ['Grow', '₦39,999', '/month', '₦436,789/yr (billed yearly)', ['Everything in Start', 'Instagram, Messenger, TikTok & Email inbox', 'Zuri AI drafts + invoicing', 'Inventory, expenses & wallet'], 'Start free trial'],
+    ['Scale', '₦59,999', '/month', '₦655,189/yr (billed yearly)', ['Everything in Grow', 'HR & payroll suite', 'Ads Studio (pay % of ad spend)', 'Priority support'], 'Talk to us'],
   ];
   return (
     <div className="landing">
@@ -2936,8 +2937,8 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
             You're in a read-only guest demo, log in with <b>guest@omnicrm.ng</b> / <b>guest-demo</b> to explore. Changes are disabled.
           </div>
         )}
-        <h1>Every chat. Every sale. Every naira.<br />One place.</h1>
-        <p className="hero-sub">OmniCRM brings WhatsApp, Instagram, Messenger, TikTok and email into one smart inbox, and runs your sales, stock, invoicing, wallet, expenses and HR — with <b>Zuri</b>, your built-in AI, doing the heavy lifting.</p>
+        <h1>One affordable platform for every Nigerian business.</h1>
+        <p className="hero-sub">From a one person shop to a multi branch enterprise, OmniCRM gives you the customer intelligence, sales power and automation that only big companies could afford before. AI does the heavy lifting. WhatsApp is the front door.</p>
         <div className="hero-cta">
           <button className="btn-primary big" onClick={onStart}>Start free</button>
           <a className="btn-ghost big" href="#pricing">See pricing</a>
@@ -2972,7 +2973,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
 
       <section id="pricing" className="landing-section">
         <h2>Simple pricing, honest money</h2>
-        <p className="muted" style={{ marginTop: -8 }}>From <b>₦13,999/month</b> — pay yearly and save 9%.</p>
+        <p className="muted" style={{ marginTop: -8 }}>From <b>₦13,999/month</b>. Pay yearly and save 9%. Basic plan: first month ₦5,999.</p>
         <div className="price-grid">
           {tiers.map(([name, price, per, yearly, perks, cta]) => (
             <div key={name} className="price-card">
@@ -2982,7 +2983,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
               <ul>
                 {perks.map((p) => <li key={p}><Icon name="check" size={14} /> {p}</li>)}
               </ul>
-              <button className={name === 'Grow' ? 'btn-primary' : 'btn-ghost'} onClick={onStart}>{cta}</button>
+              <button className={name === 'Basic' ? 'btn-primary' : 'btn-ghost'} onClick={onStart}>{cta}</button>
             </div>
           ))}
         </div>
