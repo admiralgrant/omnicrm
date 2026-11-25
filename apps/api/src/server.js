@@ -238,11 +238,13 @@ app.get('/ai/followups', { preHandler: requireAuth }, async (req) => {
 // ---- WhatsApp inbox ----
 app.get('/inbox', { preHandler: requireAuth }, async (req) => {
   const rows = db.prepare(`
-    SELECT c.id AS contact_id, c.name, c.company, c.status, c.tags,
+    SELECT c.id AS contact_id, c.name, c.company, c.status, c.tags, c.support_assignee,
+           s.name AS assignee_name,
            m.body AS last_message, m.direction AS last_direction, m.created_at AS last_at,
            (SELECT COUNT(*) FROM messages WHERE contact_id = c.id AND direction = 'in' AND read = 0) AS unread
     FROM contacts c
     JOIN messages m ON m.id = (SELECT id FROM messages WHERE contact_id = c.id AND user_id = ? ORDER BY id DESC LIMIT 1)
+    LEFT JOIN staff s ON s.id = c.support_assignee
     WHERE c.user_id = ?
     ORDER BY m.id DESC`).all(req.user.id, req.user.id);
   return { threads: rows };
@@ -262,7 +264,7 @@ app.get('/messages', { preHandler: requireAuth }, async (req, reply) => {
 app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
   const { contact_id, body, channel } = req.body || {};
   if (!contact_id || !body) return reply.code(400).send({ error: 'contact_id and body are required' });
-  const chKey = ['whatsapp', 'instagram', 'messenger', 'tiktok'].includes(channel) ? channel : 'whatsapp';
+  const chKey = ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'].includes(channel) ? channel : 'whatsapp';
   const contact = db.prepare('SELECT id, phone FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
   let status = 'sent';
@@ -284,7 +286,119 @@ app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
   db.prepare('INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, ?, ?, ?)')
     .run(req.user.id, contact_id, chKey, chKey, body);
   db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(contact_id, req.user.id);
+  if (req.user.staff_id) {
+    db.prepare('UPDATE contacts SET support_assignee = ? WHERE id = ? AND user_id = ? AND support_assignee IS NULL').run(req.user.staff_id, contact_id, req.user.id);
+  }
   return { message: db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+// bulk-mark a contact's incoming messages as read (support opens the thread)
+app.post('/messages/contact/:id/read', { preHandler: requireAuth }, async (req, reply) => {
+  const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!contact) return reply.code(404).send({ error: 'Contact not found' });
+  db.prepare("UPDATE messages SET read = 1 WHERE contact_id = ? AND user_id = ? AND direction = 'in'").run(req.params.id, req.user.id);
+  return { ok: true };
+});
+
+// ---- support desk: multiple staff handle enquiries in real time ----
+// each enquiry (contact) can be claimed by one support staff; anyone else still sees the thread
+app.get('/support/queue', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare(`SELECT c.id, c.name, c.company, c.phone, c.support_assignee,
+      s.name AS assignee_name,
+      (SELECT body FROM messages m WHERE m.contact_id = c.id AND m.user_id = c.user_id ORDER BY m.id DESC LIMIT 1) AS last_message,
+      (SELECT COUNT(*) FROM messages m WHERE m.contact_id = c.id AND m.user_id = c.user_id AND m.direction = 'in' AND m.read = 0) AS unread,
+      (SELECT MAX(created_at) FROM messages m WHERE m.contact_id = c.id AND m.user_id = c.user_id) AS last_at
+    FROM contacts c LEFT JOIN staff s ON s.id = c.support_assignee
+    WHERE c.user_id = ? AND c.last_contacted_at IS NOT NULL
+    ORDER BY c.support_assignee IS NULL DESC, last_at DESC LIMIT 60`).all(req.user.id);
+  return { enquiries: rows };
+});
+
+app.post('/support/claim', { preHandler: requireAuth }, async (req, reply) => {
+  if (!req.user.staff_id) return reply.code(403).send({ error: 'Only staff members claim enquiries.' });
+  const { contact_id } = req.body || {};
+  const c = db.prepare('SELECT id, support_assignee FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!c) return reply.code(404).send({ error: 'Enquiry not found' });
+  if (c.support_assignee && c.support_assignee !== req.user.staff_id) return reply.code(409).send({ error: 'Another support staff is already handling this enquiry.' });
+  db.prepare('UPDATE contacts SET support_assignee = ? WHERE id = ? AND user_id = ?').run(req.user.staff_id, contact_id, req.user.id);
+  db.prepare("UPDATE messages SET read = 1 WHERE contact_id = ? AND user_id = ? AND direction = 'in'").run(contact_id, req.user.id);
+  return { ok: true, assignee: req.user.staff_id };
+});
+
+app.post('/support/release', { preHandler: requireAuth }, async (req, reply) => {
+  const { contact_id } = req.body || {};
+  const c = db.prepare('SELECT id, support_assignee FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
+  if (!c) return reply.code(404).send({ error: 'Enquiry not found' });
+  if (c.support_assignee && c.support_assignee !== req.user.staff_id) return reply.code(403).send({ error: 'Only the assigned staff can release this enquiry.' });
+  db.prepare('UPDATE contacts SET support_assignee = NULL WHERE id = ? AND user_id = ?').run(contact_id, req.user.id);
+  return { ok: true };
+});
+
+// ---- Zuri: the CRM's public AI assistant (rule-based today, LLM-upgradeable) ----
+function zuriReply(message) {
+  const m = String(message || '').toLowerCase();
+  const has = (...words) => words.some((w) => m.includes(w));
+  if (has('price', 'pricing', 'cost', 'how much', 'fee', 'naira', '₦', '13,999', '13999')) {
+    return "OmniCRM starts at ₦13,999 a month. Three plans: Start ₦13,999, Grow ₦27,999, Scale ₦48,999 per month — and paying yearly saves you 9% (₦152,869, ₦305,749, ₦535,069 billed yearly). Every plan starts with a free trial. Would you like me to set up a demo for you?";
+  }
+  if (has('demo', 'book', 'trial', 'try', 'schedule', 'call')) {
+    return "Happy to arrange that! A demo takes about 20 minutes and we'll walk through your own business workflow. Share your name and phone number here and the team will reach out — or click Start free on the page to explore a read-only guest demo right now.";
+  }
+  if (has('whatsapp', 'instagram', 'tiktok', 'messenger', 'email', 'social', 'channel', 'inbox')) {
+    return "OmniCRM unifies WhatsApp, Instagram DMs, Facebook Messenger, TikTok DMs and email into ONE inbox. Every message lands in a single thread per customer, your team can claim enquiries in real time, and you never lose a customer again.";
+  }
+  if (has('inventory', 'stock', 'warehouse')) {
+    return "OmniCRM tracks your stock automatically: stock in, movements, and live deductions the moment an order is delivered or an invoice is paid. Daily digests tell your team what came in and what went out.";
+  }
+  if (has('invoice', 'payment', 'receipt', 'pay')) {
+    return "You can raise branded invoices, share payment links, track what customers owe you, and see money land in your in-app wallet. Sales reps propose prices, leadership approves, and accounts raises the invoice — full control, zero chaos.";
+  }
+  if (has('ai', 'zuri', 'bot', 'automate', 'automation')) {
+    return "That's me! I'm Zuri, OmniCRM's built-in assistant. I answer questions here, and inside the app I draft follow-up messages, WhatsApp replies and daily activity reports so your team works faster.";
+  }
+  if (has('feature', 'what can', 'do', 'module', 'hr', 'payroll', 'ads')) {
+    return "OmniCRM covers sales, customers, multi-channel inbox, invoicing, orders, inventory, expenses, wallet, HR & payroll, Ads Studio, reports and more — with departments so staff only see what concerns them. What area would you like me to explain?";
+  }
+  if (has('contact', 'human', 'agent', 'support team', 'speak to', 'phone', 'number')) {
+    return "Of course. Drop your name and phone number here and a real person from the OmniCRM team will reach you — usually within one business day.";
+  }
+  if (has('hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening')) {
+    return "Hello! I'm Zuri, OmniCRM's assistant. Ask me about pricing, features, the multi-channel inbox, or book a demo — I'm here 24/7.";
+  }
+  return "Great question! I can help with pricing (from ₦13,999/month), the multi-channel inbox, invoicing, inventory, or booking a demo. Ask away — or share your name and number and the team will call you.";
+}
+
+app.post('/zuri/chat', async (req, reply) => {
+  const { message } = req.body || {};
+  if (!message) return reply.code(400).send({ error: 'message is required' });
+  return { reply: zuriReply(message) };
+});
+
+app.post('/zuri/lead', async (req, reply) => {
+  const { name, contact, note } = req.body || {};
+  if (!name || !contact) return reply.code(400).send({ error: 'name and contact are required' });
+  const info = db.prepare("INSERT INTO contacts (user_id, name, phone, email, tags, source) VALUES (1, ?, ?, ?, 'zuri-lead', 'zuri')")
+    .run(name, contact.includes('@') ? null : contact, contact.includes('@') ? contact : null);
+  db.prepare("INSERT INTO notifications (user_id, staff_id, kind, body, link_json) VALUES (1, NULL, 'zuri_lead', ?, ?)")
+    .run(`New Zuri lead: ${name} (${contact})${note ? ' — ' + note : ''}`, JSON.stringify({ view: 'customers' }));
+  return { ok: true, lead_id: info.lastInsertRowid };
+});
+
+// ---- email channel inbound (placeholder webhook until SMTP/IMAP creds land) ----
+app.post('/webhooks/email', async (req, reply) => {
+  const { from_email, to_email, subject, text } = req.body || {};
+  if (!from_email || !text) return { ok: true };
+  const conn = db.prepare(`SELECT user_id FROM inbox_channels WHERE channel = 'email' AND status != 'disconnected' LIMIT 1`).get();
+  if (!conn) return { ok: true };
+  let contact = db.prepare('SELECT id FROM contacts WHERE user_id = ? AND email = ? LIMIT 1').get(conn.user_id, from_email);
+  if (!contact) {
+    const info = db.prepare("INSERT INTO contacts (user_id, name, email, tags, source) VALUES (?, ?, ?, 'lead', 'email')")
+      .run(conn.user_id, from_email, from_email);
+    contact = { id: info.lastInsertRowid };
+  }
+  db.prepare("INSERT INTO messages (user_id, contact_id, direction, body, status, read, channel) VALUES (?, ?, 'in', ?, 'received', 0, 'email')")
+    .run(conn.user_id, contact.id, subject ? `${subject}. ${text}` : text);
+  return { ok: true };
 });
 
 app.post('/messages/:id/read', { preHandler: requireAuth }, async (req, reply) => {
@@ -2052,11 +2166,21 @@ app.post('/expenses', { preHandler: requireAuth }, async (req, reply) => {
   return { expense: db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid) };
 });
 
-app.get('/expenses', { preHandler: requireAuth }, async (req) => {
-  const { month } = req.query || {};
+app.get('/expenses', { preHandler: requireAuth }, async (req, reply) => {
+  const { month, from, to } = req.query || {};
   const seeAll = expenseSeeAll(req.user);
   let rows;
-  if (month) {
+  if (from && to) {
+    // range filter, capped at 12 months (server-enforced)
+    const fm = new Date(from + '-01'); const tm = new Date(to + '-01');
+    const span = (tm.getFullYear() - fm.getFullYear()) * 12 + (tm.getMonth() - fm.getMonth());
+    if (span < 0 || span > 11) return reply.code(400).send({ error: 'Range must be within 12 months' });
+    const base = `SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND e.expense_date >= ? AND e.expense_date < ?`;
+    const params = [from + '-01', new Date(tm.getFullYear(), tm.getMonth() + 1, 1).toISOString().slice(0, 10)];
+    rows = seeAll
+      ? db.prepare(`${base} ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, ...params)
+      : db.prepare(`${base} AND e.staff_id = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, ...params, req.user.staff_id);
+  } else if (month) {
     rows = seeAll
       ? db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND strftime('%Y-%m', e.expense_date) = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, month)
       : db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND e.staff_id = ? AND strftime('%Y-%m', e.expense_date) = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, req.user.staff_id, month);
@@ -2070,10 +2194,20 @@ app.get('/expenses', { preHandler: requireAuth }, async (req) => {
 
 app.get('/expenses/report', { preHandler: requireAuth }, async (req, reply) => {
   if (!expenseSeeAll(req.user)) return reply.code(403).send({ error: 'The account department sees the expense report.' });
-  const { month } = req.query || {};
-  const rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND strftime('%Y-%m', expense_date) = ? GROUP BY category ORDER BY total DESC`).all(req.user.id, month);
+  const { month, from, to } = req.query || {};
+  let rows;
+  if (from && to) {
+    const fm = new Date(from + '-01'); const tm = new Date(to + '-01');
+    const span = (tm.getFullYear() - fm.getFullYear()) * 12 + (tm.getMonth() - fm.getMonth());
+    if (span < 0 || span > 11) return reply.code(400).send({ error: 'Range must be within 12 months' });
+    const end = new Date(tm.getFullYear(), tm.getMonth() + 1, 1).toISOString().slice(0, 10);
+    rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND expense_date >= ? AND expense_date < ? GROUP BY category ORDER BY total DESC`)
+      .all(req.user.id, from + '-01', end);
+  } else {
+    rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND strftime('%Y-%m', expense_date) = ? GROUP BY category ORDER BY total DESC`).all(req.user.id, month);
+  }
   const total = rows.reduce((s, r) => s + (r.total || 0), 0);
-  return { month, total: Math.round(total), by_category: rows };
+  return { month: from && to ? `${from} → ${to}` : month, total: Math.round(total), by_category: rows };
 });
 
 app.delete('/expenses/:id', { preHandler: requireAuth }, async (req, reply) => {
@@ -2084,23 +2218,29 @@ app.delete('/expenses/:id', { preHandler: requireAuth }, async (req, reply) => {
   return { ok: true };
 });
 
-// ---- multi-channel inbox (whatsapp + instagram + messenger + tiktok) ----
+// ---- multi-channel inbox (whatsapp + instagram + messenger + tiktok + email) ----
 const INBOX_CHANNELS = [
   { key: 'whatsapp', label: 'WhatsApp' },
   { key: 'instagram', label: 'Instagram' },
   { key: 'messenger', label: 'Facebook Messenger' },
   { key: 'tiktok', label: 'TikTok' },
+  { key: 'email', label: 'Email' },
 ];
 
 app.get('/inbox/channels', { preHandler: requireAuth }, async (req) => {
   const rows = db.prepare('SELECT * FROM inbox_channels WHERE user_id = ?').all(req.user.id);
   const map = Object.fromEntries(rows.map((r) => [r.channel, r]));
+  const unread = db.prepare("SELECT channel, COUNT(*) AS n FROM messages WHERE user_id = ? AND direction = 'in' AND read = 0 GROUP BY channel").all(req.user.id);
+  const unreadMap = Object.fromEntries(unread.map((r) => [r.channel, r.n]));
   const channels = INBOX_CHANNELS.map((c) => {
-    if (c.key === 'whatsapp') {
-      const st = waEnabled() ? 'connected' : (map.whatsapp?.status || 'disconnected');
-      return { ...c, status: st, account_id: map.whatsapp?.account_id || null, connected_at: map.whatsapp?.connected_at || null };
-    }
-    return { ...c, status: map[c.key]?.status || 'disconnected', account_id: map[c.key]?.account_id || null, connected_at: map[c.key]?.connected_at || null };
+    const st = c.key === 'whatsapp' && waEnabled() ? 'connected' : (map[c.key]?.status || 'disconnected');
+    return {
+      ...c,
+      status: st,
+      unread: unreadMap[c.key] || 0,
+      account_id: map[c.key]?.account_id || null,
+      connected_at: map[c.key]?.connected_at || null,
+    };
   });
   return { channels };
 });
