@@ -1433,7 +1433,7 @@ export default function App() {
                 </div>
                 <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
                 <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
-                {jwtPayload()?.platform && (
+                {jwtPayload()?.platform_only && (
                   <>
                     <h3 style={{ marginTop: 14 }}><Icon name="shield" size={14} /> Platform console</h3>
                     <p className="muted">You sit above every organization: enter any org, reset passwords, control features. Every action is logged.</p>
