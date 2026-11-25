@@ -392,7 +392,7 @@ export default function App() {
   };
   const newInvoice = () => {
     setInvView('new');
-    setNewInv({ contact_id: '', due_date: '', currency: 'NGN', items: [{ description: '', qty: 1, unit_price: '' }] });
+    setNewInv({ contact_id: '', due_date: '', currency: 'NGN', apply_vat: true, items: [{ description: '', qty: 1, unit_price: '' }] });
     api('/fx').then(setFx).catch(() => {});
   };
   const shareWhatsApp = () => {
@@ -431,11 +431,16 @@ export default function App() {
     window.location.href = `mailto:${activeInv.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
   const saveInvoice = async () => {
-    if (!newInv.contact_id || newInv.items.length === 0) return;
-    await api('/invoices', { method: 'POST', body: JSON.stringify(newInv) });
-    const d = await api('/invoices');
-    setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables);
-    setNewInv(null); setInvView('list');
+    if (!newInv.contact_id) { alert('Select a customer first.'); return; }
+    if (newInv.items.length === 0 || newInv.items.some((it) => !it.description || !(Number(it.qty) > 0) || Number(it.unit_price) < 0)) {
+      alert('Add at least one item with a description, quantity and unit price.'); return;
+    }
+    try {
+      await api('/invoices', { method: 'POST', body: JSON.stringify({ ...newInv, apply_vat: newInv.apply_vat !== false }) });
+      const d = await api('/invoices');
+      setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables);
+      setNewInv(null); setInvView('list');
+    } catch (e) { alert(e.message || 'Could not save the invoice'); }
   };
   const refreshProducts = async () => {
     const p = await api('/products');
@@ -2237,12 +2242,28 @@ export default function App() {
                         }}
                       />
                     </div>
+                    <div className="inv-field line-total-field">
+                      <label className="inv-label" style={{ marginTop: 0 }}>Line total</label>
+                      <div className="line-total">{fmt((Number(it.qty) || 0) * (Number(it.unit_price) || 0))}</div>
+                    </div>
                     <button className="btn-ghost sm remove-line" onClick={() => setNewInv({ ...newInv, items: newInv.items.filter((_, j) => j !== idx) })}>Remove</button>
                   </div>
                 ))}
                 <button className="btn-ghost sm" onClick={() => setNewInv({ ...newInv, items: [...newInv.items, { description: '', qty: 1, unit_price: '' }] })}>+ Add item</button>
+                <div className="inv-line" style={{ marginTop: 12 }}>
+                  <span>Add VAT (7.5%)</span>
+                  <label className="switch">
+                    <input type="checkbox" checked={newInv.apply_vat !== false} onChange={(e) => setNewInv({ ...newInv, apply_vat: e.target.checked })} />
+                    <span className="slider" />
+                  </label>
+                </div>
+                <div className="inv-kpis" style={{ marginTop: 12 }}>
+                  <div className="inv-line"><span>Subtotal</span><span>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0), newInv.currency)}</span></div>
+                  {newInv.apply_vat !== false && <div className="inv-line"><span>VAT (7.5%)</span><span>{fmtCur(Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075), newInv.currency)}</span></div>}
+                  <div className="inv-line"><b>Total</b><b>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * (newInv.apply_vat !== false ? 1.075 : 1), newInv.currency)}</b></div>
+                </div>
                 <div className="quick-actions">
-                  <button className="btn-primary" onClick={saveInvoice}>Save invoice (7.5% VAT added)</button>
+                  <button className="btn-primary" onClick={saveInvoice}>{newInv.apply_vat !== false ? 'Save invoice (VAT included)' : 'Save invoice (no VAT)'}</button>
                   <button className="btn-ghost" onClick={() => setInvView('list')}>Cancel</button>
                 </div>
               </>
