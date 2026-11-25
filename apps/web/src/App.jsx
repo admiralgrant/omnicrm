@@ -361,7 +361,8 @@ export default function App() {
   const sendMsg = async () => {
     const body = (draft || composer).trim();
     if (!body) return;
-    await api('/messages', { method: 'POST', body: JSON.stringify({ contact_id: activeContact.contact_id, body, channel: inboxChannel }) });
+    const ch = activeContact?.source === 'zuri' ? 'web' : inboxChannel;
+    await api('/messages', { method: 'POST', body: JSON.stringify({ contact_id: activeContact.contact_id, body, channel: ch }) });
     setDraft(''); setComposer('');
     const [m, t] = await Promise.all([
       api(`/messages?contact_id=${activeContact.contact_id}${inboxChannel !== 'whatsapp' ? `&channel=${inboxChannel}` : ''}`),
@@ -2845,22 +2846,43 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
     setZuriMsgs((m) => [...m, { who: 'user', text: msg }]);
     setZuriBusy(true);
     try {
-      const r = await fetch(`${API}/zuri/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) });
+      const sid = localStorage.getItem('zuri_session') || '';
+      const r = await fetch(`${API}/zuri/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg, session_id: sid || undefined }) });
       const d = await r.json();
+      if (d.session_id) localStorage.setItem('zuri_session', d.session_id);
       setTimeout(() => {
         setZuriMsgs((m) => [...m, { who: 'zuri', text: d.reply || 'Sorry, I could not process that. Try asking about pricing or a demo.' }]);
         setZuriBusy(false);
       }, 550);
-      // capture leads: message looks like a name + phone number
-      const digits = (msg.match(/\d/g) || []).length;
-      if (digits >= 7) {
-        fetch(`${API}/zuri/lead`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: msg.replace(/\d+/g, '').trim().slice(0, 60) || 'Zuri lead', contact: (msg.match(/[\d+\s-]{7,}/) || [''])[0], note: 'From hero chat' }) }).catch(() => {});
-      }
     } catch {
       setTimeout(() => { setZuriMsgs((m) => [...m, { who: 'zuri', text: "I'm having a moment — try again in a few seconds, or start free and explore the app directly." }]); setZuriBusy(false); }, 550);
     }
   };
   const zuriChips = ['Pricing', 'Features', 'Book a demo', 'Talk to a human'];
+  // poll for human replies while the panel is open
+  useEffect(() => {
+    if (!zuriOpen) return;
+    let alive = true;
+    const poll = async () => {
+      const sid = localStorage.getItem('zuri_session');
+      if (!sid) return;
+      try {
+        const r = await fetch(`${API}/zuri/session/${sid}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (alive && d.messages?.length) {
+          setZuriMsgs((m) => {
+            const ids = new Set(m.filter((x) => x.id).map((x) => x.id));
+            return [...m, ...d.messages.filter((x) => !ids.has(x.id)).map((x) => ({ who: 'human', text: x.text, id: x.id }))];
+          });
+        }
+      } catch { /* offline */ }
+    };
+    const iv = setInterval(poll, 5000);
+    poll();
+    return () => { alive = false; clearInterval(iv); };
+  }, [zuriOpen]);
+
 
   const features = [
     ['trend', 'Sales CRM', 'Pipeline, follow-ups and AI-drafted messages that close deals while you sleep.'],
