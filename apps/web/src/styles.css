@@ -429,4 +429,8 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 .price-yearly span { font-size: 12.5px; font-weight: 700; color: #0b8f5c; }
 .price-grid .price-card > .btn { width: 100%; margin-top: auto; }
 [data-theme="dark"] .price-yearly span { color: #12b57b; }
-.tier-box { margin: 8px 0 4px; padding: 10px 14px; border: 1px dashed var(--line); border-radius: 12px; background: var(--surface-2); }
+/* invoice line totals + totals block */
+.line-total-field { min-width: 110px; }
+.line-total { font-weight: 800; font-size: 16px; color: var(--text); padding: 9px 0; }
+.inv-kpis { border-top: 1px dashed var(--line); padding-top: 6px; }
+.inv-kpis .inv-line b { font-size: 16px; }
