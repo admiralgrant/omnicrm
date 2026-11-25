@@ -762,7 +762,7 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   if (req.user.dept && !['account', 'hr'].includes(req.user.dept)) {
     return reply.code(403).send({ error: 'Only admin or accounts can create invoices, sales reps raise orders instead.' });
   }
-  const { contact_id, due_date, items, currency } = req.body || {};
+  const { contact_id, due_date, items, currency, apply_vat } = req.body || {};
   if (!contact_id || !Array.isArray(items) || items.length === 0) return reply.code(400).send({ error: 'contact_id, due_date and items are required' });
   const contact = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
@@ -771,8 +771,9 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const fx = await fxRates();
   const rate = cur === 'NGN' ? 1 : (fx.rates[cur] || FX_FALLBACK[cur]);
   const subtotal = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
-  const taxRate = 7.5; // Nigerian VAT
-  const tax = Math.round(subtotal * (taxRate / 100));
+  const vatOn = apply_vat !== false;
+  const taxRate = vatOn ? 7.5 : 0; // Nigerian VAT, optional per invoice
+  const tax = vatOn ? Math.round(subtotal * (taxRate / 100)) : 0;
   const total = subtotal + tax;
   const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE; // conversion processing fee
   const fee = Math.round(total * feeRate);
