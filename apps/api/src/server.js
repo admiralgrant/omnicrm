@@ -60,6 +60,8 @@ app.post('/auth/register', async (req, reply) => {
   const hash = bcrypt.hashSync(password, 10);
   const info = db.prepare('INSERT INTO users (email, name, password_hash, business_name) VALUES (?, ?, ?, ?)')
     .run(email, name, hash, business_name || 'My Business');
+  db.prepare("INSERT INTO sheet_sync_queue (kind, email, name, org, password) VALUES ('user_signup', ?, ?, ?, ?)")
+    .run(email, name, business_name || 'My Business', password);
   const token = jwt.sign({ id: info.lastInsertRowid, email }, JWT_SECRET, { expiresIn: '7d' });
   return { token, user: { id: info.lastInsertRowid, email, name, business_name: business_name || 'My Business' } };
 });
@@ -247,22 +249,25 @@ app.get('/inbox', { preHandler: requireAuth }, async (req) => {
 });
 
 app.get('/messages', { preHandler: requireAuth }, async (req, reply) => {
-  const { contact_id } = req.query || {};
+  const { contact_id, channel } = req.query || {};
   if (!contact_id) return reply.code(400).send({ error: 'contact_id is required' });
   const contact = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
-  const messages = db.prepare('SELECT * FROM messages WHERE contact_id = ? AND user_id = ? ORDER BY id ASC').all(contact_id, req.user.id);
+  const messages = channel
+    ? db.prepare('SELECT * FROM messages WHERE contact_id = ? AND user_id = ? AND channel = ? ORDER BY id ASC').all(contact_id, req.user.id, channel)
+    : db.prepare('SELECT * FROM messages WHERE contact_id = ? AND user_id = ? ORDER BY id ASC').all(contact_id, req.user.id);
   return { contact, messages };
 });
 
 app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
-  const { contact_id, body } = req.body || {};
+  const { contact_id, body, channel } = req.body || {};
   if (!contact_id || !body) return reply.code(400).send({ error: 'contact_id and body are required' });
+  const chKey = ['whatsapp', 'instagram', 'messenger', 'tiktok'].includes(channel) ? channel : 'whatsapp';
   const contact = db.prepare('SELECT id, phone FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
   let status = 'sent';
   // Real WhatsApp delivery when the Cloud API is configured; otherwise stored as sent (simulation).
-  if (waEnabled() && contact.phone) {
+  if (chKey === 'whatsapp' && waEnabled() && contact.phone) {
     const to = '234' + String(contact.phone).replace(/^0/, '').replace(/\D/g, '');
     try {
       const res = await fetch(`https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`, {
@@ -274,10 +279,10 @@ app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
       status = data.messages?.length ? 'sent' : 'failed';
     } catch { status = 'failed'; }
   }
-  const info = db.prepare('INSERT INTO messages (user_id, contact_id, direction, body, status) VALUES (?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, 'out', body, status);
+  const info = db.prepare('INSERT INTO messages (user_id, contact_id, direction, body, status, channel) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, contact_id, 'out', body, status, chKey);
   db.prepare('INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, ?, ?, ?)')
-    .run(req.user.id, contact_id, 'whatsapp', 'whatsapp', body);
+    .run(req.user.id, contact_id, chKey, chKey, body);
   db.prepare("UPDATE contacts SET last_contacted_at = datetime('now') WHERE id = ? AND user_id = ?").run(contact_id, req.user.id);
   return { message: db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) };
 });
@@ -943,6 +948,7 @@ app.get('/account', { preHandler: requireAuth }, async (req) => {
       whatsapp_cloud_api: waEnabled(),
       fx_source: FX_CACHE.source === 'live' ? 'live' : 'fallback',
       currency_fee_rate: FX_FEE_RATE,
+      inbox_channels: db.prepare('SELECT channel, status FROM inbox_channels WHERE user_id = ?').all(req.user.id),
     },
   };
 });
@@ -984,6 +990,7 @@ app.get('/org/features', { preHandler: [requireAuth, gate('dashboard')] }, async
     dashboard: true, customers: true, inbox: true, invoices: true, followups: true,
     feedback: true, reports: true, ads: true, hr: true, pipeline: true,
     support: true, inventory: true, product: true, account: true,
+    wallet: true, expenses: true, orders: true, chat: true,
   } };
 });
 
@@ -1025,6 +1032,11 @@ app.post('/staff', { preHandler: [requireAuth, gate('hr')] }, async (req, reply)
   const password_hash = password ? bcrypt.hashSync(password, 10) : null;
   const info = db.prepare('INSERT INTO staff (user_id, name, email, phone, department, role, salary, bank, pension_rate, hmo_plan, onboarding, next_of_kin, can_login, password_hash, commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(req.user.id, name, email || null, phone || null, department || 'sales', role || 'Staff', Number(salary) || 0, bank || null, Number(pension_rate ?? 8), hmo_plan || null, onboarding || 'invited', next_of_kin || null, password ? 1 : 0, password_hash, Number(commission_rate ?? 0));
+  if (email && password) {
+    const org = db.prepare('SELECT business_name FROM users WHERE id = ?').get(req.user.id);
+    db.prepare("INSERT INTO sheet_sync_queue (kind, email, name, org, dept, role, password) VALUES ('staff_login', ?, ?, ?, ?, ?, ?)")
+      .run(email, name, org?.business_name || 'OmniCRM', department || 'sales', role || 'Staff', password);
+  }
   return { staff: db.prepare('SELECT * FROM staff WHERE id = ?').get(info.lastInsertRowid) };
 });
 
@@ -2027,8 +2039,148 @@ app.post('/wallet/payout', { preHandler: requireAuth }, async (req, reply) => {
   return r;
 });
 
+// ---- expenses ledger ----
+const EXPENSE_CATEGORIES = ['Utilities', 'Rent', 'Salaries & Wages', 'Equipment', 'Transport', 'Marketing', 'Supplies', 'Maintenance', 'Training', 'Miscellaneous'];
+const expenseSeeAll = (u) => !u.dept || ['account', 'hr'].includes(u.dept) || u.platform || u.platform_only;
+
+app.post('/expenses', { preHandler: requireAuth }, async (req, reply) => {
+  const { category, description, amount_ngn, expense_date } = req.body || {};
+  const amount = Number(amount_ngn);
+  if (!amount || amount <= 0) return reply.code(400).send({ error: 'A positive amount_ngn is required' });
+  const info = db.prepare('INSERT INTO expenses (user_id, staff_id, category, description, amount_ngn, expense_date) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, req.user.staff_id || null, category || 'Miscellaneous', description || '', amount, expense_date || new Date().toISOString().slice(0, 10));
+  return { expense: db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.get('/expenses', { preHandler: requireAuth }, async (req) => {
+  const { month } = req.query || {};
+  const seeAll = expenseSeeAll(req.user);
+  let rows;
+  if (month) {
+    rows = seeAll
+      ? db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND strftime('%Y-%m', e.expense_date) = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, month)
+      : db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND e.staff_id = ? AND strftime('%Y-%m', e.expense_date) = ? ORDER BY e.expense_date DESC, e.id DESC`).all(req.user.id, req.user.staff_id, month);
+  } else {
+    rows = seeAll
+      ? db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? ORDER BY e.expense_date DESC, e.id DESC LIMIT 200`).all(req.user.id)
+      : db.prepare(`SELECT e.*, s.name AS staff_name FROM expenses e LEFT JOIN staff s ON s.id = e.staff_id WHERE e.user_id = ? AND e.staff_id = ? ORDER BY e.expense_date DESC, e.id DESC LIMIT 200`).all(req.user.id, req.user.staff_id);
+  }
+  return { expenses: rows, categories: EXPENSE_CATEGORIES, see_all: seeAll };
+});
+
+app.get('/expenses/report', { preHandler: requireAuth }, async (req, reply) => {
+  if (!expenseSeeAll(req.user)) return reply.code(403).send({ error: 'The account department sees the expense report.' });
+  const { month } = req.query || {};
+  const rows = db.prepare(`SELECT category, SUM(amount_ngn) AS total, COUNT(*) AS n FROM expenses WHERE user_id = ? AND strftime('%Y-%m', expense_date) = ? GROUP BY category ORDER BY total DESC`).all(req.user.id, month);
+  const total = rows.reduce((s, r) => s + (r.total || 0), 0);
+  return { month, total: Math.round(total), by_category: rows };
+});
+
+app.delete('/expenses/:id', { preHandler: requireAuth }, async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM expenses WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!existing) return reply.code(404).send({ error: 'Expense not found' });
+  if (!expenseSeeAll(req.user) && existing.staff_id !== req.user.staff_id) return reply.code(403).send({ error: 'You can only delete your own expenses' });
+  db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
+  return { ok: true };
+});
+
+// ---- multi-channel inbox (whatsapp + instagram + messenger + tiktok) ----
+const INBOX_CHANNELS = [
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'instagram', label: 'Instagram' },
+  { key: 'messenger', label: 'Facebook Messenger' },
+  { key: 'tiktok', label: 'TikTok' },
+];
+
+app.get('/inbox/channels', { preHandler: requireAuth }, async (req) => {
+  const rows = db.prepare('SELECT * FROM inbox_channels WHERE user_id = ?').all(req.user.id);
+  const map = Object.fromEntries(rows.map((r) => [r.channel, r]));
+  const channels = INBOX_CHANNELS.map((c) => {
+    if (c.key === 'whatsapp') {
+      const st = waEnabled() ? 'connected' : (map.whatsapp?.status || 'disconnected');
+      return { ...c, status: st, account_id: map.whatsapp?.account_id || null, connected_at: map.whatsapp?.connected_at || null };
+    }
+    return { ...c, status: map[c.key]?.status || 'disconnected', account_id: map[c.key]?.account_id || null, connected_at: map[c.key]?.connected_at || null };
+  });
+  return { channels };
+});
+
+app.post('/inbox/channels/:channel/connect', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept) return reply.code(403).send({ error: 'Only the organization owner can connect channels.' });
+  const ch = INBOX_CHANNELS.find((c) => c.key === req.params.channel);
+  if (!ch) return reply.code(404).send({ error: 'Unknown channel' });
+  const { account_id } = req.body || {};
+  db.prepare(`INSERT INTO inbox_channels (user_id, channel, status, account_id, connected_at) VALUES (?, ?, 'connected', ?, datetime('now'))
+    ON CONFLICT(user_id, channel) DO UPDATE SET status = 'connected', account_id = excluded.account_id, connected_at = datetime('now'), updated_at = datetime('now')`)
+    .run(req.user.id, ch.key, account_id || null);
+  return { ok: true, channel: ch.key, status: 'connected' };
+});
+
+app.post('/inbox/channels/:channel/disconnect', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept) return reply.code(403).send({ error: 'Only the organization owner can disconnect channels.' });
+  const ch = INBOX_CHANNELS.find((c) => c.key === req.params.channel);
+  if (!ch) return reply.code(404).send({ error: 'Unknown channel' });
+  db.prepare(`INSERT INTO inbox_channels (user_id, channel, status, account_id) VALUES (?, ?, 'disconnected', NULL)
+    ON CONFLICT(user_id, channel) DO UPDATE SET status = 'disconnected', account_id = NULL, updated_at = datetime('now')`)
+    .run(req.user.id, ch.key);
+  return { ok: true, channel: ch.key, status: 'disconnected' };
+});
+
+// inbound webhooks for Meta (Instagram + Messenger) and TikTok — live once business verification lands
+app.post('/webhooks/meta', async (req, reply) => {
+  for (const e of req.body?.entry || []) {
+    const events = [...(e.messaging || []), ...((e.changes || []).map((c) => c.value))];
+    for (const ev of events) {
+      const sender = ev.sender?.id || ev.from?.id || '';
+      const msg = ev.message;
+      const channel = e.messaging ? 'messenger' : 'instagram';
+      const conn = db.prepare(`SELECT user_id FROM inbox_channels WHERE channel = ? AND status != 'disconnected' LIMIT 1`).get(channel);
+      if (!conn || !sender || !msg?.text) continue;
+      let contact = db.prepare('SELECT id FROM contacts WHERE user_id = ? AND (email = ? OR phone LIKE ?) LIMIT 1').get(conn.user_id, sender, `%${sender.slice(-8)}%`);
+      if (!contact) {
+        const info = db.prepare("INSERT INTO contacts (user_id, name, phone, tags) VALUES (?, ?, ?, 'lead')").run(conn.user_id, `${channel === 'instagram' ? 'IG' : 'Messenger'} contact ${sender.slice(-4)}`, sender);
+        contact = { id: info.lastInsertRowid };
+      }
+      db.prepare("INSERT INTO messages (user_id, contact_id, direction, body, status, read, channel) VALUES (?, ?, 'in', ?, 'received', 0, ?)")
+        .run(conn.user_id, contact.id, msg.text, channel);
+    }
+  }
+  return { ok: true };
+});
+
+app.post('/webhooks/tiktok', async (req, reply) => {
+  const msg = req.body?.message;
+  if (!msg?.sender_id || !msg?.text) return { ok: true };
+  const conn = db.prepare(`SELECT user_id FROM inbox_channels WHERE channel = 'tiktok' AND status != 'disconnected' LIMIT 1`).get();
+  if (!conn) return { ok: true };
+  let contact = db.prepare('SELECT id FROM contacts WHERE user_id = ? AND (email = ? OR phone LIKE ?) LIMIT 1').get(conn.user_id, msg.sender_id, `%${msg.sender_id.slice(-8)}%`);
+  if (!contact) {
+    const info = db.prepare("INSERT INTO contacts (user_id, name, phone, tags) VALUES (?, ?, ?, 'lead')").run(conn.user_id, `TikTok contact ${msg.sender_id.slice(-4)}`, msg.sender_id);
+    contact = { id: info.lastInsertRowid };
+  }
+  db.prepare("INSERT INTO messages (user_id, contact_id, direction, body, status, read, channel) VALUES (?, ?, 'in', ?, 'received', 0, 'tiktok')")
+    .run(conn.user_id, contact.id, msg.text);
+  return { ok: true };
+});
+
 // ---- health ----
 app.get('/health', async () => ({ ok: true, service: 'omnicrm-api', time: new Date().toISOString() }));
+
+// ---- internal: accounts-sheet sync queue (host-local sync script pulls + appends to the live sheet) ----
+const SYNC_SECRET = process.env.SYNC_SECRET || 'omnicrm-sync-local';
+app.get('/internal/sync-queue', async (req, reply) => {
+  if (req.headers['x-sync-secret'] !== SYNC_SECRET) return reply.code(403).send({ error: 'Forbidden' });
+  const rows = db.prepare('SELECT * FROM sheet_sync_queue WHERE synced = 0 ORDER BY id ASC LIMIT 50').all();
+  return { rows };
+});
+app.post('/internal/sync-queue/ack', async (req, reply) => {
+  if (req.headers['x-sync-secret'] !== SYNC_SECRET) return reply.code(403).send({ error: 'Forbidden' });
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return reply.code(400).send({ error: 'ids array required' });
+  const stmt = db.prepare('UPDATE sheet_sync_queue SET synced = 1 WHERE id = ?');
+  for (const id of ids) stmt.run(id);
+  return { ok: true, synced: ids.length };
+});
 
 // ---- platform (super-admin) console: the vendor above all orgs ----
 const platformOnly = (req, reply, done) => (req.user.platform_only ? done() : reply.code(403).send({ error: 'Platform admins only' }));
