@@ -567,4 +567,9 @@ CREATE INDEX IF NOT EXISTS idx_convmsgs ON conversation_messages(conversation_id
 const msgCols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
 if (!msgCols.includes('channel')) db.exec("ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'whatsapp'");
 
+// migration: contacts.support_assignee — which support staff is handling this enquiry
+const cCols = db.prepare('PRAGMA table_info(contacts)').all().map((c) => c.name);
+if (!cCols.includes('support_assignee')) db.exec('ALTER TABLE contacts ADD COLUMN support_assignee INTEGER');
+if (!cCols.includes('source')) db.exec("ALTER TABLE contacts ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
+
 export default db;
