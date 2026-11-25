@@ -238,7 +238,7 @@ app.get('/ai/followups', { preHandler: requireAuth }, async (req) => {
 // ---- WhatsApp inbox ----
 app.get('/inbox', { preHandler: requireAuth }, async (req) => {
   const rows = db.prepare(`
-    SELECT c.id AS contact_id, c.name, c.company, c.status, c.tags, c.support_assignee,
+    SELECT c.id AS contact_id, c.name, c.company, c.status, c.tags, c.support_assignee, c.source,
            s.name AS assignee_name,
            m.body AS last_message, m.direction AS last_direction, m.created_at AS last_at,
            (SELECT COUNT(*) FROM messages WHERE contact_id = c.id AND direction = 'in' AND read = 0) AS unread
@@ -264,7 +264,7 @@ app.get('/messages', { preHandler: requireAuth }, async (req, reply) => {
 app.post('/messages', { preHandler: requireAuth }, async (req, reply) => {
   const { contact_id, body, channel } = req.body || {};
   if (!contact_id || !body) return reply.code(400).send({ error: 'contact_id and body are required' });
-  const chKey = ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'].includes(channel) ? channel : 'whatsapp';
+  const chKey = ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email', 'web'].includes(channel) ? channel : 'whatsapp';
   const contact = db.prepare('SELECT id, phone FROM contacts WHERE id = ? AND user_id = ?').get(contact_id, req.user.id);
   if (!contact) return reply.code(404).send({ error: 'Contact not found' });
   let status = 'sent';
@@ -334,44 +334,108 @@ app.post('/support/release', { preHandler: requireAuth }, async (req, reply) => 
   return { ok: true };
 });
 
-// ---- Zuri: the CRM's public AI assistant (rule-based today, LLM-upgradeable) ----
+// ---- Zuri: the CRM's public AI assistant (rules today, LLM-upgradeable, fully logged) ----
 function zuriReply(message) {
   const m = String(message || '').toLowerCase();
   const has = (...words) => words.some((w) => m.includes(w));
-  if (has('price', 'pricing', 'cost', 'how much', 'fee', 'naira', '₦', '13,999', '13999')) {
-    return "OmniCRM starts at ₦13,999 a month. Three plans: Start ₦13,999, Grow ₦27,999, Scale ₦48,999 per month — and paying yearly saves you 9% (₦152,869, ₦305,749, ₦535,069 billed yearly). Every plan starts with a free trial. Would you like me to set up a demo for you?";
+  if (has('price', 'pricing', 'cost', 'how much', 'fee', 'naira', '₦', '13,999', '13999', 'plan', 'plans', 'subscription', 'pay monthly', 'monthly')) {
+    return "OmniCRM pricing: Start ₦13,999/month, Grow ₦27,999/month, Scale ₦48,999/month. Pay yearly and save 9%: ₦152,869, ₦305,749 and ₦535,069 billed yearly. Every plan begins with a free trial — shall I arrange a demo for your business?";
   }
-  if (has('demo', 'book', 'trial', 'try', 'schedule', 'call')) {
-    return "Happy to arrange that! A demo takes about 20 minutes and we'll walk through your own business workflow. Share your name and phone number here and the team will reach out — or click Start free on the page to explore a read-only guest demo right now.";
+  if (has('demo', 'book', 'trial', 'try it', 'schedule', 'see it', 'walk me', 'show me')) {
+    return "A demo takes about 20 minutes and we'll walk through YOUR business workflow. Leave your name and phone number here and the team will call you — or tap Start free on this page to explore a read-only demo right now.";
   }
-  if (has('whatsapp', 'instagram', 'tiktok', 'messenger', 'email', 'social', 'channel', 'inbox')) {
-    return "OmniCRM unifies WhatsApp, Instagram DMs, Facebook Messenger, TikTok DMs and email into ONE inbox. Every message lands in a single thread per customer, your team can claim enquiries in real time, and you never lose a customer again.";
+  if (has('whatsapp', 'instagram', 'tiktok', 'messenger', 'email', 'social', 'channel', 'inbox', 'chat with customer', 'customer chat')) {
+    return "OmniCRM brings WhatsApp, Instagram DMs, Facebook Messenger, TikTok DMs and email into ONE inbox. Each customer gets one thread, your team claims enquiries in real time, and unread counts sit on every channel tab.";
   }
-  if (has('inventory', 'stock', 'warehouse')) {
-    return "OmniCRM tracks your stock automatically: stock in, movements, and live deductions the moment an order is delivered or an invoice is paid. Daily digests tell your team what came in and what went out.";
+  if (has('inventory', 'stock', 'warehouse', 'goods')) {
+    return "Inventory runs itself: record stock in, watch movements, and the system deducts automatically when an order is delivered or an invoice is paid. Daily digests tell your team what arrived and what left.";
   }
-  if (has('invoice', 'payment', 'receipt', 'pay')) {
-    return "You can raise branded invoices, share payment links, track what customers owe you, and see money land in your in-app wallet. Sales reps propose prices, leadership approves, and accounts raises the invoice — full control, zero chaos.";
+  if (has('invoice', 'payment', 'receipt', 'pay', 'billing', 'collect money', 'debtor', 'owed')) {
+    return "Raise branded invoices, share payment links, track who owes you, and watch payments land in your in-app wallet. Reps propose prices, leadership approves, accounts raises the invoice — no leaks.";
   }
-  if (has('ai', 'zuri', 'bot', 'automate', 'automation')) {
-    return "That's me! I'm Zuri, OmniCRM's built-in assistant. I answer questions here, and inside the app I draft follow-up messages, WhatsApp replies and daily activity reports so your team works faster.";
+  if (has('ai', 'zuri', 'bot', 'automate', 'automation', 'intelligence')) {
+    return "That's me — Zuri. On the website I answer your questions instantly, and inside the app I draft follow-ups, WhatsApp replies and daily reports so your team moves faster. What would you like to know?";
   }
-  if (has('feature', 'what can', 'do', 'module', 'hr', 'payroll', 'ads')) {
-    return "OmniCRM covers sales, customers, multi-channel inbox, invoicing, orders, inventory, expenses, wallet, HR & payroll, Ads Studio, reports and more — with departments so staff only see what concerns them. What area would you like me to explain?";
+  if (has('feature', 'what can', 'what does', 'module', 'hr', 'payroll', 'ads', 'report', 'reports')) {
+    return "OmniCRM covers: sales CRM, multi-channel inbox, invoicing, orders, inventory, expenses, wallet, HR & payroll, Ads Studio, and reports — with departments so staff only see their own work. Which area should I open up?";
   }
-  if (has('contact', 'human', 'agent', 'support team', 'speak to', 'phone', 'number')) {
-    return "Of course. Drop your name and phone number here and a real person from the OmniCRM team will reach you — usually within one business day.";
+  if (has('human', 'agent', 'real person', 'speak to', 'talk to', 'someone', 'call me', 'contact', 'phone', 'number', 'reach')) {
+    return "Of course — I'll hand you to a real person. Drop your name and phone number here and it goes straight to the OmniCRM team's inbox in the CRM; they'll reply to you right here in this chat, usually within one business day.";
   }
-  if (has('hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening')) {
-    return "Hello! I'm Zuri, OmniCRM's assistant. Ask me about pricing, features, the multi-channel inbox, or book a demo — I'm here 24/7.";
+  if (has('sign up', 'signup', 'register', 'start', 'get started', 'account', 'create')) {
+    return "Tap Start free on this page to create your business account in under a minute. No card needed. You can also just ask me anything else first.";
   }
-  return "Great question! I can help with pricing (from ₦13,999/month), the multi-channel inbox, invoicing, inventory, or booking a demo. Ask away — or share your name and number and the team will call you.";
+  if (has('hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'how are you')) {
+    return "Hello! I'm Zuri, OmniCRM's assistant — I answer instantly, 24/7. Ask me about pricing, features, the inbox, inventory, or say Talk to a human.";
+  }
+  return "Let me make sure I help with the right thing. I can cover: pricing (from ₦13,999/month), the multi-channel inbox, invoicing, inventory, HR, or booking a demo. Ask one of those, or say Talk to a human and a real person will pick this up.";
 }
 
+function zuriLog(sessionId, who, body) {
+  db.prepare('INSERT INTO zuri_logs (session_id, who, body) VALUES (?, ?, ?)').run(sessionId || null, who, body);
+}
+
+async function zuriBrain(message) {
+  // LLM when a key is configured, rules as the always-on fallback
+  if (process.env.LLM_API_KEY) {
+    const llm = await askLLM(
+      'You are Zuri, the friendly assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm and clear. Pricing: Start N13,999/month, Grow N27,999, Scale N48,999; yearly saves 9%. You cannot book real appointments — collect a name and phone number for handoff.',
+      message
+    );
+    if (llm) return llm.trim();
+  }
+  return zuriReply(message);
+}
+
+const zuriHandoffKeywords = ['human', 'agent', 'real person', 'speak to', 'talk to', 'someone', 'call me', 'contact'];
+
 app.post('/zuri/chat', async (req, reply) => {
-  const { message } = req.body || {};
+  const { message, session_id } = req.body || {};
   if (!message) return reply.code(400).send({ error: 'message is required' });
-  return { reply: zuriReply(message) };
+  const sid = session_id || `${randomUUID().slice(0, 8)}`;
+  zuriLog(sid, 'visitor', message);
+
+  // handoff: create/refresh the session and push the enquiry into the CRM inbox
+  const wantsHuman = zuriHandoffKeywords.some((w) => String(message).toLowerCase().includes(w));
+  const digits = (String(message).match(/\d/g) || []).length >= 7;
+  if (wantsHuman || digits) {
+    let sess = db.prepare('SELECT * FROM zuri_sessions WHERE id = ?').get(sid);
+    let contactId = sess?.contact_id;
+    if (!contactId) {
+      const info = db.prepare("INSERT INTO contacts (user_id, name, phone, email, tags, source) VALUES (1, ?, ?, ?, 'zuri-lead', 'zuri')")
+        .run('Website visitor', null, null);
+      contactId = info.lastInsertRowid;
+      db.prepare('INSERT INTO zuri_sessions (id, contact_id) VALUES (?, ?)').run(sid, contactId);
+    }
+    if (digits) {
+      const phone = (String(message).match(/[\d+\s-]{7,}/) || [''])[0];
+      const before = String(message).split(phone)[0];
+      const name = before.replace(/[^a-zA-Z ,.'-]/g, '').trim().slice(0, 60) || 'Website visitor';
+      db.prepare('UPDATE contacts SET phone = ?, name = ? WHERE id = ?').run(phone, name, contactId);
+      db.prepare('UPDATE zuri_sessions SET contact = ? WHERE id = ?').run(phone, sid);
+      db.prepare("INSERT INTO messages (user_id, contact_id, direction, body, status, read, channel) VALUES (1, ?, 'in', ?, 'received', 0, 'web')")
+        .run(contactId, `[Zuri handoff] ${name} (${phone}) asks: ${String(message).slice(0, 300)}`);
+      db.prepare("INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (1, NULL, 'zuri_handoff', ?)")
+        .run(`Human handoff requested: ${name} (${phone})`);
+      zuriLog(sid, 'zuri', 'handoff captured');
+      return { reply: `Thank you ${name.split(' ')[0]}! Your details are with the OmniCRM team now — a real person will reply to you right here in this chat. You can keep asking me questions in the meantime.`, session_id: sid };
+    }
+    return { reply: "Of course — I'll connect you. Drop your name and phone number here (for example: Chidi 0803 123 4567) and it goes straight to the team's inbox.", session_id: sid };
+  }
+
+  const answer = await zuriBrain(message);
+  zuriLog(sid, 'zuri', answer);
+  return { reply: answer, session_id: sid };
+});
+
+// visitor polls for human replies made from the CRM
+app.get('/zuri/session/:id', async (req, reply) => {
+  const sess = db.prepare('SELECT * FROM zuri_sessions WHERE id = ?').get(req.params.id);
+  if (!sess || !sess.contact_id) return reply.code(404).send({ error: 'Session not found' });
+  const rows = db.prepare("SELECT id, body FROM messages WHERE user_id = 1 AND contact_id = ? AND direction = 'out' AND channel = 'web' AND id > ? ORDER BY id ASC LIMIT 20")
+    .all(sess.contact_id, sess.last_out_id || 0);
+  if (rows.length) db.prepare('UPDATE zuri_sessions SET last_out_id = ? WHERE id = ?').run(rows[rows.length - 1].id, sess.id);
+  return { messages: rows.map((r) => ({ id: r.id, text: r.body })) };
 });
 
 app.post('/zuri/lead', async (req, reply) => {
@@ -379,9 +443,15 @@ app.post('/zuri/lead', async (req, reply) => {
   if (!name || !contact) return reply.code(400).send({ error: 'name and contact are required' });
   const info = db.prepare("INSERT INTO contacts (user_id, name, phone, email, tags, source) VALUES (1, ?, ?, ?, 'zuri-lead', 'zuri')")
     .run(name, contact.includes('@') ? null : contact, contact.includes('@') ? contact : null);
-  db.prepare("INSERT INTO notifications (user_id, staff_id, kind, body, link_json) VALUES (1, NULL, 'zuri_lead', ?, ?)")
-    .run(`New Zuri lead: ${name} (${contact})${note ? ' — ' + note : ''}`, JSON.stringify({ view: 'customers' }));
+  db.prepare("INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (1, NULL, 'zuri_lead', ?)")
+    .run(`New Zuri lead: ${name} (${contact})${note ? ' — ' + note : ''}`);
   return { ok: true, lead_id: info.lastInsertRowid };
+});
+
+// ---- Zuri admin log view (platform + org owner) ----
+app.get('/zuri/logs', { preHandler: [requireAuth, (req, reply, done) => (req.user.platform || req.user.platform_only ? done() : reply.code(403).send({ error: 'Platform admins only' }))] }, async (req) => {
+  const rows = db.prepare('SELECT * FROM zuri_logs ORDER BY id DESC LIMIT 100').all();
+  return { logs: rows };
 });
 
 // ---- email channel inbound (placeholder webhook until SMTP/IMAP creds land) ----
