@@ -1,4 +1,6 @@
 // OmniCRM API, auth, contacts, deals, dashboard, AI follow-up engine (v0.1)
+import { loadEnvFile } from 'node:process';
+try { loadEnvFile('.env'); } catch { /* no .env file, defaults apply */ }
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import bcrypt from 'bcryptjs';
@@ -393,7 +395,7 @@ async function zuriBrain(message) {
   // LLM when a key is configured, rules as the always-on fallback
   if (process.env.LLM_API_KEY) {
     const llm = await askLLM(
-      'You are Zuri, the friendly assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm and clear. Pricing: Start N13,999/month, Grow N27,999, Scale N48,999; yearly saves 9%. You cannot book real appointments, collect a name and phone number for handoff.',
+      'You are Zuri, the friendly AI assistant for OmniCRM, a Nigerian business CRM. Keep answers under 90 words, warm, clear and honest. Never invent features. Pricing: Basic N13,999/month (first month N5,999) for products, inventory, invoices, expenses; Start N24,999 adds the full customer CRM and WhatsApp inbox; Grow N39,999 adds Instagram, Messenger, TikTok and Email inbox plus wallet; Scale N59,999 adds HR, payroll and everything unlimited. Paying yearly saves 9 percent. You cannot book real appointments, collect a name and phone number for handoff. If a visitor is unhappy or confused, apologize briefly and suggest talking to a human.',
       message
     );
     if (llm) return llm.trim();
@@ -408,6 +410,8 @@ app.post('/zuri/chat', async (req, reply) => {
   if (!message) return reply.code(400).send({ error: 'message is required' });
   const sid = session_id || `${randomUUID().slice(0, 8)}`;
   zuriLog(sid, 'visitor', message);
+  // rate guard: max 25 messages per session per hour, LLM switches to rules past that
+  const recent = db.prepare("SELECT COUNT(*) AS n FROM zuri_logs WHERE session_id = ? AND who = 'visitor' AND created_at > datetime('now', '-1 hour')").get(sid).n;
 
   // handoff: create/refresh the session and push the enquiry into the CRM inbox
   const wantsHuman = zuriHandoffKeywords.some((w) => String(message).toLowerCase().includes(w));
@@ -437,7 +441,7 @@ app.post('/zuri/chat', async (req, reply) => {
     return { reply: "Of course, I'll connect you. Drop your name and phone number here (for example: Chidi 0803 123 4567) and it goes straight to the team's inbox.", session_id: sid };
   }
 
-  const answer = await zuriBrain(message);
+  const answer = recent > 25 ? zuriReply(message) : await zuriBrain(message);
   zuriLog(sid, 'zuri', answer);
   return { reply: answer, session_id: sid };
 });
