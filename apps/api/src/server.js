@@ -1174,6 +1174,7 @@ app.post('/webhooks/whatsapp', async (req, reply) => {
 });
 
 // ---- org feature switches (admin) ----
+const ALL_SECTIONS = ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'mail', 'followups', 'feedback', 'reports', 'pipeline', 'hr', 'ads', 'wallet', 'expenses', 'chat', 'product', 'inventory', 'sales', 'support', 'account'];
 const TIERS = {
   basic: {
     label: 'Basic',
@@ -1189,7 +1190,7 @@ const TIERS = {
     price: '₦24,999/mo',
     staff_cap: 3,
     contact_cap: 500,
-    features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail'],
+    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'sales'],
     channels: ['whatsapp'],
   },
   grow: {
@@ -1197,7 +1198,7 @@ const TIERS = {
     price: '₦39,999/mo',
     staff_cap: 10,
     contact_cap: 5000,
-    features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat'],
+    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'sales', 'support'],
     channels: ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'],
   },
   scale: {
@@ -1205,7 +1206,7 @@ const TIERS = {
     price: '₦59,999/mo',
     staff_cap: 0,
     contact_cap: 0,
-    features: ['dashboard', 'customers', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'hr', 'ads'],
+    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'hr', 'ads', 'sales', 'support', 'account'],
     channels: ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'],
   },
 };
@@ -1217,7 +1218,7 @@ const tierOf = (userId) => {
 const tierFeatures = (userId) => {
   const { cfg } = tierOf(userId);
   const map = {};
-  for (const f of cfg.features) map[f] = true;
+  for (const s of ALL_SECTIONS) map[s] = cfg.features.includes(s);
   return map;
 };
 const tierUsage = (userId) => ({
