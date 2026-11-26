@@ -2260,7 +2260,7 @@ export default function App() {
                 <div className="inv-kpis" style={{ marginTop: 12 }}>
                   <div className="inv-line"><span>Subtotal</span><span>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0), newInv.currency)}</span></div>
                   {newInv.apply_vat !== false && <div className="inv-line"><span>VAT (7.5%)</span><span>{fmtCur(Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075), newInv.currency)}</span></div>}
-                  <div className="inv-line"><b>Total</b><b>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * (newInv.apply_vat !== false ? 1.075 : 1), newInv.currency)}</b></div>
+                  <div className="inv-line"><b>Total</b><b>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) + (newInv.apply_vat !== false ? Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075) : 0), newInv.currency)}</b></div>
                 </div>
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveInvoice}>{newInv.apply_vat !== false ? 'Save invoice (VAT included)' : 'Save invoice (no VAT)'}</button>
