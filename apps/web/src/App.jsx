@@ -14,10 +14,16 @@ async function api(path, options = {}) {
   if (options.body) headers['Content-Type'] = 'application/json';
   const token = localStorage.getItem(tokenKey);
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(API + path, { ...options, headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
-  return data;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const res = await fetch(API + path, { ...options, headers, signal: ctrl.signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const jwtPayload = () => {
@@ -46,6 +52,7 @@ export default function App() {
   const [inboxChannel, setInboxChannel] = useState('whatsapp');
   const [tierData, setTierData] = useState(null);
   const [orgProfile, setOrgProfile] = useState(null);
+  const [logoPicked, setLogoPicked] = useState(null); // pending logo file for guided preview
   const [staffAdd, setStaffAdd] = useState(null); // quick add-staff form on Account
   const [activeContact, setActiveContact] = useState(null);
   const [msgs, setMsgs] = useState([]);
@@ -99,7 +106,6 @@ export default function App() {
   const [remit, setRemit] = useState(null);
   const [shifts, setShifts] = useState([]);
   const [portalShifts, setPortalShifts] = useState([]);
-  const [demoLinks, setDemoLinks] = useState([]);
   const [commissions, setCommissions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
@@ -155,17 +161,18 @@ export default function App() {
     if (!token) { setLoading(false); return; }
     (async () => {
       try {
-        const [d, c, f, t, p, tk, iv, fxD, fb, pl, ac, ex, ch] = await Promise.all([
+        const [d, c, f, t, p, tk, iv, fb, pl, ac, ex, ch] = await Promise.all([
           api('/dashboard'), api('/contacts'), api('/ai/followups'), api('/inbox'),
-          api('/products'), api('/tickets'), api('/invoices'), api('/fx'),
+          api('/products'), api('/tickets'), api('/invoices'),
           api('/feedback'), api('/pipeline'), api('/account'),
           api('/expenses'), api('/inbox/channels'),
         ]);
+        // fx rates load on their own so a slow external rate fetch can never freeze login
+        api('/fx').then(setFx).catch(() => setFx(null));
         setDash(d.kpis); setContacts(c.contacts); setFollowups(f.followups); setThreads(t.threads);
         setProducts(p.products); setStockValue(p.stock_value); setLowCount(p.low_count);
         setTickets(tk.tickets); setTicketCounts(tk.counts);
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
-        setFx(fxD);
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
         setExpenseData(ex); setInboxChannels(ch.channels || []);
         if (ex.see_all) setExpenseReport(await api(`/expenses/report?month=${new Date().toISOString().slice(0, 7)}`));
@@ -177,7 +184,6 @@ export default function App() {
         try { setAttendance((await api('/attendance')).attendance); } catch { /* non-HR */ }
         try { setRemit(await api('/remittances')); } catch { /* non-HR */ }
         try { setShifts((await api('/shifts')).shifts); } catch { /* non-HR */ }
-        try { setDemoLinks((await api('/demo-links')).links); } catch { /* owner-only */ }
         try { setCommissions((await api('/commissions')).rows); } catch { /* n/a */ }
         try { setOrders((await api('/orders')).rows); } catch { /* n/a */ }
         try { setNotifs((await api('/notifications')).rows); } catch { /* n/a */ }
@@ -407,9 +413,8 @@ export default function App() {
     const intl = String(activeInv.phone || '').replace(/^0/, '234');
     const link = `${location.origin}${payLink}`;
     const lines = invItems.map((it) => `• ${it.description} × ${it.qty}, ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
-    const feeLine = activeInv.fee > 0 ? `\nProcessing fee: ${fmtCur(activeInv.fee, activeInv.currency)}` : '';
     const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
-    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ${fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)} (incl. 7.5% VAT${activeInv.fee > 0 ? ' + processing fee' : ''})${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
+    const msg = `Hello, here is your invoice ${activeInv.number} from Bescon Paints.\n\n${lines}\n\nTotal: ${fmtCur(activeInv.total, activeInv.currency)} (incl. 7.5% VAT)${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online here:\n${link}`;
     window.open(`https://wa.me/${intl}?text=${encodeURIComponent(msg)}`, '_blank');
   };
   const copyPayLink = () => {
@@ -432,10 +437,9 @@ export default function App() {
   const emailInvoice = () => {
     const link = `${location.origin}${payLink}`;
     const lines = invItems.map((it) => `• ${it.description} × ${it.qty}, ${fmtCur(it.amount, activeInv.currency)}`).join('\n');
-    const feeLine = activeInv.fee > 0 ? `\nProcessing fee: ${fmtCur(activeInv.fee, activeInv.currency)}` : '';
     const equiv = activeInv.currency !== 'NGN' ? `\n(≈ ${fmt(activeInv.ngn_total)})` : '';
     const subject = `Invoice ${activeInv.number} from ${activeInv.company || 'us'}`;
-    const body = `Hello,\n\nPlease find invoice ${activeInv.number} below.\n\n${lines}\n\nSubtotal: ${fmtCur(activeInv.subtotal, activeInv.currency)}\nVAT (7.5%): ${fmtCur(activeInv.tax, activeInv.currency)}${feeLine}\nTotal due: ${fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)}${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online:\n${link}`;
+    const body = `Hello,\n\nPlease find invoice ${activeInv.number} below.\n\n${lines}\n\nSubtotal: ${fmtCur(activeInv.subtotal, activeInv.currency)}\nVAT (7.5%): ${fmtCur(activeInv.tax, activeInv.currency)}\nTotal due: ${fmtCur(activeInv.total, activeInv.currency)}${equiv}\nDue: ${activeInv.due_date}\n\nPay securely online:\n${link}`;
     window.location.href = `mailto:${activeInv.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
   const saveInvoice = async () => {
@@ -604,6 +608,8 @@ export default function App() {
     ['ads', 'megaphone', 'Ads Studio'],
     ['wallet', 'wallet', 'Wallet'],
     ['expenses', 'receipt', 'Expenses'],
+    ['profile', 'user', 'Profile'],
+    ['settings', 'sliders', 'Settings'],
   ];
 
   const depts = [
@@ -612,13 +618,12 @@ export default function App() {
     ['inventory', 'package', 'Inventory'],
     ['product', 'tag', 'Product'],
     ['hr', 'briefcase', 'HR'],
-    ['account', 'user', 'Account'],
   ];
 
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo">{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -631,7 +636,7 @@ export default function App() {
       {/* mobile drawer: every destination behind the hamburger */}
       <div className={`drawer-backdrop ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
       <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
-        <div className="logo">{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setDrawerOpen(false); }}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -644,7 +649,7 @@ export default function App() {
       <main className="main">
         <div className="topbar">
           <button className="icon-btn hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu"><Icon name="menu" size={22} /></button>
-          <div className="logo topbar-logo">{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
+          <div className="logo topbar-logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
           <div className="topbar-actions">
             <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle dark mode">
               <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} />
@@ -1475,9 +1480,12 @@ export default function App() {
               </>
             )}
 
-            {dept === 'account' && account && (
+          </>
+        )}
+
+            {view === 'profile' && account && (
               <div className="card">
-                <h3><Icon name="user" size={14} /> Account</h3>
+                <h3><Icon name="user" size={14} /> Profile</h3>
                 <div className="inv-line"><span>Business</span><span>{account.user.business_name || ', '}</span></div>
                 <div className="inv-line"><span>Owner</span><span>{account.user.name}</span></div>
                 <div className="inv-line"><span>Email</span><span>{account.user.email}</span></div>
@@ -1486,22 +1494,45 @@ export default function App() {
                     <div className="profile-logo-row">
                       {orgProfile.logo_url ? <img className="profile-logo" src={API + orgProfile.logo_url} alt="logo" /> : <div className="profile-logo empty">Logo</div>}
                       <div style={{ flex: 1 }}>
-                        <b>Company profile</b>
+                        <b>Company logo</b>
                         <p className="muted" style={{ margin: '2px 0 0' }}>Shows on your invoices and across the app.</p>
                       </div>
                       {!isGuest && !me?.dept && (
                         <label className="logo-upload sm">
                           <Icon name="file" size={12} /> {orgProfile.logo_url ? 'Change' : 'Upload'}
-                          <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={async (e) => {
+                          <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => {
                             const f = e.target.files?.[0];
                             if (!f) return;
-                            const url = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
-                            await api('/org/logo', { method: 'POST', body: JSON.stringify({ logo_data_url: url }) });
-                            setOrgProfile((await api('/org/profile')).profile);
+                            const fr = new FileReader();
+                            fr.onload = () => setLogoPicked({ url: fr.result, name: f.name });
+                            fr.readAsDataURL(f);
                           }} />
                         </label>
                       )}
                     </div>
+                    {!isGuest && !me?.dept && (
+                      <p className="muted" style={{ fontSize: 11, margin: '6px 0 0' }}>PNG, JPG or WebP · any shape or size · 500×500 or larger looks sharpest · your logo keeps its own shape, never distorted or stretched</p>
+                    )}
+                    {logoPicked && !isGuest && !me?.dept && (
+                      <div className="logo-preview-wrap">
+                        <div className="logo-preview-box">
+                          <span className="muted" style={{ fontSize: 10 }}>In the app</span>
+                          <img className="logo-mark-img big" src={logoPicked.url} alt="preview" />
+                        </div>
+                        <div className="logo-preview-box">
+                          <span className="muted" style={{ fontSize: 10 }}>On your invoice</span>
+                          <div className="invoice-pill-preview"><img src={logoPicked.url} alt="preview" /></div>
+                        </div>
+                        <div className="logo-preview-actions">
+                          <button className="btn-primary sm" onClick={async () => {
+                            await api('/org/logo', { method: 'POST', body: JSON.stringify({ logo_data_url: logoPicked.url }) });
+                            setOrgProfile((await api('/org/profile')).profile);
+                            setLogoPicked(null);
+                          }}><Icon name="check" size={13} /> Use this logo</button>
+                          <button className="btn-ghost sm" onClick={() => setLogoPicked(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
                     {!isGuest && !me?.dept ? (
                       <div className="quick-form" style={{ paddingTop: 8 }}>
                         <input placeholder="Address" defaultValue={orgProfile.address} onBlur={async (e) => { await api('/org/profile', { method: 'PUT', body: JSON.stringify({ address: e.target.value }) }); }} />
@@ -1529,6 +1560,12 @@ export default function App() {
                 <div className="inv-line"><span>Receivables outstanding</span><span>{fmt(account.billing.receivables_ngn)}</span></div>
                 <div className="inv-line"><span>Paid invoices (all time)</span><span>{fmt(account.billing.paid_total_ngn)}</span></div>
                 <div className="inv-line"><span>Foreign-currency invoices</span><span>{account.billing.foreign_invoices}</span></div>
+              </div>
+            )}
+
+            {view === 'settings' && (
+              <div className="card">
+                <h3><Icon name="sliders" size={16} /> Settings</h3>
                 <h3 style={{ marginTop: 14 }}><Icon name="settings" size={14} /> Integrations</h3>
                 <div className="inv-line">
                   <span>Paystack</span>
@@ -1539,7 +1576,7 @@ export default function App() {
                   <span className={`chip ${account.integrations.whatsapp_cloud_api ? 'closed' : 'draft'}`}>{account.integrations.whatsapp_cloud_api ? 'connected' : 'not connected'}</span>
                 </div>
                 <div className="inv-line"><span>FX rates</span><span>{account.integrations.fx_source}</span></div>
-                <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign invoices</span></div>
+                <div className="inv-line"><span>Conversion fee</span><span>{(account.integrations.currency_fee_rate * 100).toFixed(1)}% of foreign-currency payments</span></div>
                 {[['whatsapp', 'WhatsApp Cloud API'], ['instagram', 'Instagram DMs'], ['messenger', 'Facebook Messenger'], ['tiktok', 'TikTok DMs']].map(([k, label]) => {
                   const st = k === 'whatsapp'
                     ? (account.integrations.whatsapp_cloud_api ? 'connected' : ((account.integrations.inbox_channels || []).find((c) => c.channel === k)?.status || 'disconnected'))
@@ -1659,18 +1696,10 @@ export default function App() {
                     ))}
                   </>
                 )}
-                {!isGuest && (
-                  <>
-                <h3 style={{ marginTop: 14 }}><Icon name="link" size={14} /> Demo links (shareable, revocable)</h3>
-                <p className="muted">Demo links are managed from the Platform Console. Ask your platform admin for one.</p>
-                  </>
-                )}
               </>
             )}
               </div>
             )}
-          </>
-        )}
 
         {view === 'customers' && (custView === 'form' && custForm ? (
           <div className="card">
@@ -2196,7 +2225,7 @@ export default function App() {
                       <span>{i.number} · due {i.due_date}{i.currency !== 'NGN' ? ` · ${i.currency}` : ''}</span>
                     </div>
                     <div className="inv-right">
-                      <div className="inv-amt">{fmtCur(i.total + (i.fee || 0), i.currency)}</div>
+                      <div className="inv-amt">{fmtCur(i.total, i.currency)}</div>
                       {i.currency !== 'NGN' && <div className="muted inv-equiv">≈ {fmt(i.ngn_total)}</div>}
                       <span className={`chip ${i.status}`}>{i.status}</span>
                     </div>
@@ -2378,10 +2407,7 @@ export default function App() {
                   ))}
                   <div className="inv-line muted"><span>Subtotal</span><span>{fmtCur(activeInv.subtotal, activeInv.currency)}</span></div>
                   <div className="inv-line muted"><span>VAT (7.5%)</span><span>{fmtCur(activeInv.tax, activeInv.currency)}</span></div>
-                  {activeInv.fee > 0 && (
-                    <div className="inv-line muted"><span>Processing fee ({(activeInv.fee_rate * 100).toFixed(1)}%)</span><span>{fmtCur(activeInv.fee, activeInv.currency)}</span></div>
-                  )}
-                  <div className="inv-line total"><span>Total</span><span>{fmtCur(activeInv.total + (activeInv.fee || 0), activeInv.currency)}</span></div>
+                  <div className="inv-line total"><span>Total</span><span>{fmtCur(activeInv.total, activeInv.currency)}</span></div>
                   {activeInv.currency !== 'NGN' && (
                     <div className="inv-line muted"><span>Naira equivalent @ {Number(activeInv.fx_rate).toLocaleString()}</span><span>{fmt(activeInv.ngn_total)}</span></div>
                   )}
