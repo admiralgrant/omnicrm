@@ -756,23 +756,26 @@ app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
   const { due_date, items, currency } = req.body || {};
   const cur = (currency || inv.currency || 'NGN').toUpperCase();
   if (!FX_CURRENCIES.includes(cur)) return reply.code(400).send({ error: `Unsupported currency: ${cur}` });
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const fxNow = await fxRates();
+  const rate = cur === 'NGN' ? 1 : (inv.currency === cur && inv.fx_rate ? inv.fx_rate : (fxNow.rates[cur] || FX_FALLBACK[cur]));
+  // currency switching: stored amounts convert between naira and the chosen currency
+  const switchFactor = cur === inv.currency ? 1 : (cur === 'NGN' ? inv.fx_rate : 1 / rate);
   let newItems = inv.items;
   if (Array.isArray(items) && items.length > 0) {
     db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(inv.id);
     for (const it of items) {
-      const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
+      const qty = Number(it.qty) || 0; const up = r2((Number(it.unit_price) || 0) * switchFactor);
       db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(inv.id, it.description || 'Item', qty, up, qty * up, it.product_id || null);
+        .run(inv.id, it.description || 'Item', qty, up, r2(qty * up), it.product_id || null);
     }
   }
   const currentItems = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
   const subtotal = currentItems.reduce((s, it) => s + it.amount, 0);
-  const tax = Math.round(subtotal * 0.075);
-  const total = subtotal + tax;
-  const fx = await fxRates();
-  const rate = cur === 'NGN' ? 1 : (inv.currency === cur && inv.fx_rate ? inv.fx_rate : (fx.rates[cur] || FX_FALLBACK[cur]));
+  const tax = r2(subtotal * 0.075);
+  const total = r2(subtotal + tax);
   const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE;
-  const fee = Math.round(total * feeRate);
+  const fee = r2(total * feeRate);
   db.prepare('UPDATE invoices SET due_date = ?, currency = ?, fx_rate = ?, fee_rate = ?, fee = ?, subtotal = ?, tax = ?, total = ?, ngn_total = ? WHERE id = ? AND user_id = ?')
     .run(due_date || inv.due_date, cur, rate, feeRate, fee, subtotal, tax, total, Math.round((total + fee) * rate), inv.id, req.user.id);
   return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
@@ -791,14 +794,16 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   if (!FX_CURRENCIES.includes(cur)) return reply.code(400).send({ error: `Unsupported currency: ${cur}. Use NGN, USD, EUR or GBP.` });
   const fx = await fxRates();
   const rate = cur === 'NGN' ? 1 : (fx.rates[cur] || FX_FALLBACK[cur]);
-  const subtotal = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
+  const r2 = (n) => Math.round(n * 100) / 100;
+  // foreign-currency invoices: naira prices convert into the chosen currency; books stay in naira
+  const subtotal = cur === 'NGN' ? items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) : items.reduce((s, it) => s + r2((Number(it.qty) || 0) * r2((Number(it.unit_price) || 0) / rate)), 0);
   const vatOn = apply_vat !== false;
   const taxRate = vatOn ? 7.5 : 0; // Nigerian VAT, optional per invoice
-  const tax = vatOn ? Math.round(subtotal * (taxRate / 100)) : 0;
-  const total = subtotal + tax;
+  const tax = vatOn ? r2(subtotal * (taxRate / 100)) : 0;
+  const total = r2(subtotal + tax);
   const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE; // conversion processing fee
-  const fee = Math.round(total * feeRate);
-  const grandTotal = total + fee;
+  const fee = r2(total * feeRate);
+  const grandTotal = r2(total + fee);
   const ngnTotal = Math.round(grandTotal * rate);
   const year = new Date().getFullYear();
   const maxRow = db.prepare("SELECT number FROM invoices WHERE user_id = ? AND number LIKE ? ORDER BY number DESC LIMIT 1").get(req.user.id, `INV-${year}-%`);
@@ -807,9 +812,10 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token, currency, fx_rate, ngn_total, fee_rate, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(req.user.id, contact_id, number, due_date || new Date().toISOString().slice(0, 10), subtotal, taxRate, tax, total, randomUUID(), cur, rate, ngnTotal, feeRate, fee);
   for (const it of items) {
-    const qty = Number(it.qty) || 0; const up = Number(it.unit_price) || 0;
+    const qty = Number(it.qty) || 0; const upRaw = Number(it.unit_price) || 0;
+    const up = cur === 'NGN' ? upRaw : r2(upRaw / rate);
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(info.lastInsertRowid, it.description || 'Item', qty, up, qty * up, it.product_id || null);
+      .run(info.lastInsertRowid, it.description || 'Item', qty, up, r2(qty * up), it.product_id || null);
   }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(info.lastInsertRowid);
   return { invoice: inv };
