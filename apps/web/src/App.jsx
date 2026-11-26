@@ -3,6 +3,16 @@ import Icon from './Icon.jsx';
 
 const API = '/api';
 const tokenKey = 'omnicrm_token';
+// new OmniCRM brand mark (used everywhere the old "O" used to sit)
+const BrandMark = ({ className }) => (
+  <img className={className || 'logo-mark-img'} src="/brand/omnicrm-mark.png" alt="OmniCRM" />
+);
+// org logo URL carrying the token so <img> tags can fetch it without an Authorization header
+const orgLogoSrc = (url) => {
+  if (!url) return null;
+  const t = localStorage.getItem(tokenKey);
+  return `${API}${url}${url.includes('?') ? '&' : '?'}auth=${t || ''}`;
+};
 const FEATURE_KEYS = ['customers', 'inbox', 'invoices', 'followups', 'feedback', 'reports', 'ads', 'hr', 'pipeline', 'orders', 'chat', 'wallet', 'expenses'];
 // A demo-link tab must always boot clean: never carry an old session into guest mode.
 if (typeof window !== 'undefined' && sessionStorage.getItem('omnicrm_demo') && localStorage.getItem(tokenKey)) {
@@ -623,7 +633,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -636,7 +646,7 @@ export default function App() {
       {/* mobile drawer: every destination behind the hamburger */}
       <div className={`drawer-backdrop ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
       <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
-        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setDrawerOpen(false); }}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -649,7 +659,7 @@ export default function App() {
       <main className="main">
         <div className="topbar">
           <button className="icon-btn hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu"><Icon name="menu" size={22} /></button>
-          <div className="logo topbar-logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
+          <div className="logo topbar-logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b>OmniCRM</b><span>beta</span></div></div>
           <div className="topbar-actions">
             <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle dark mode">
               <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} />
@@ -1492,7 +1502,7 @@ export default function App() {
                 {orgProfile && (
                   <div className="tier-box">
                     <div className="profile-logo-row">
-                      {orgProfile.logo_url ? <img className="profile-logo" src={API + orgProfile.logo_url} alt="logo" /> : <div className="profile-logo empty">Logo</div>}
+                      {orgProfile.logo_url ? <img className="profile-logo" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <div className="profile-logo empty">Logo</div>}
                       <div style={{ flex: 1 }}>
                         <b>Company logo</b>
                         <p className="muted" style={{ margin: '2px 0 0' }}>Shows on your invoices and across the app.</p>
@@ -2815,7 +2825,7 @@ function SuperAdminApp() {
   return (
     <div className="platform-shell">
       <header className="platform-top">
-        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>platform console</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>platform console</span></div></div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className="chip closed">super admin</span>
           <button className="btn-ghost sm" onClick={load}>Refresh</button>
@@ -3038,7 +3048,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
   return (
     <div className="landing">
       <header className="landing-nav">
-        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>beta</span></div></div>
         <nav className="landing-links">
           <a href="#features">Features</a>
           <a href="#categories">Who it's for</a>
@@ -3114,7 +3124,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
       </section>
 
       <footer className="landing-footer">
-        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>beta</span></div></div>
         <p className="muted">Made for Nigerian businesses · Lagos, Nigeria</p>
         <p className="muted">© 2026 OmniCRM · <a href="/privacy.html" style={{ color: 'inherit' }}>Privacy & AI Disclosure</a></p>
       </footer>
@@ -3192,7 +3202,7 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
     <div className="center login">
       <div className="card login-card">
         <button className="btn-ghost back" onClick={onBack}>← Back</button>
-        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>beta</span></div></div>
         <h3>{mode === 'login' ? 'Welcome back' : 'Create your business'}</h3>
         <form onSubmit={submit}>
           {mode === 'register' && (
