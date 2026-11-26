@@ -806,7 +806,7 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const grandTotal = r2(total + fee);
   const ngnTotal = Math.round(grandTotal * rate);
   const year = new Date().getFullYear();
-  const maxRow = db.prepare("SELECT number FROM invoices WHERE user_id = ? AND number LIKE ? ORDER BY number DESC LIMIT 1").get(req.user.id, `INV-${year}-%`);
+  const maxRow = db.prepare("SELECT number FROM invoices WHERE number LIKE ? ORDER BY number DESC LIMIT 1").get(`INV-${year}-%`);
   const lastNum = maxRow ? (parseInt(String(maxRow.number).split('-').pop(), 10) || 0) : 0;
   const number = `INV-${year}-${String(lastNum + 1).padStart(3, '0')}`;
   const info = db.prepare('INSERT INTO invoices (user_id, contact_id, number, due_date, subtotal, tax_rate, tax, total, pay_token, currency, fx_rate, ngn_total, fee_rate, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -984,6 +984,9 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   const grand = inv.total + (inv.fee || 0);
 
   const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Invoice ${inv.number}` } });
+  // DejaVu Sans carries the ₦ (U+20A6) and other currency glyphs that Helvetica lacks
+  doc.registerFont('Body', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf');
+  doc.registerFont('BodyBold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf');
   reply.header('Content-Type', 'application/pdf');
   reply.header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
   const chunks = [];
@@ -1005,21 +1008,21 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
     }
   }
   doc.fillColor('#FFFFFF');
-  doc.fontSize(15).font('Helvetica-Bold').text(biz.toUpperCase(), 40 + logoX, 30, { width: 300, characterSpacing: 1 });
-  doc.fontSize(8.5).font('Helvetica').fillColor('#BFE3EA');
+  doc.fontSize(15).font('BodyBold').text(biz.toUpperCase(), 40 + logoX, 30, { width: 300, characterSpacing: 1 });
+  doc.fontSize(8.5).font('Body').fillColor('#BFE3EA');
   const headerLines = [inv.address, inv.biz_phone, 'Lagos, Nigeria'].filter(Boolean).join('  ·  ');
   doc.text(headerLines, 40 + logoX, 52, { width: 340 });
-  doc.fontSize(26).font('Helvetica-Bold').fillColor(BRAND_ACCENT).text('INVOICE', 355, 26, { width: 200, align: 'right', characterSpacing: 2 });
-  doc.fontSize(9).font('Helvetica').fillColor('#FFFFFF');
+  doc.fontSize(26).font('BodyBold').fillColor(BRAND_ACCENT).text('INVOICE', 355, 26, { width: 200, align: 'right', characterSpacing: 2 });
+  doc.fontSize(9).font('Body').fillColor('#FFFFFF');
   doc.text(inv.number, 355, 62, { width: 200, align: 'right' });
   doc.text(`Issued ${inv.issue_date}   ·   Due ${inv.due_date}`, 355, 76, { width: 200, align: 'right' });
   const statusLabel = invStatus(inv).toUpperCase();
-  doc.font('Helvetica-Bold').fillColor(invStatus(inv) === 'paid' ? '#7BE0A8' : BRAND_ACCENT).text(statusLabel, 355, 92, { width: 200, align: 'right' });
+  doc.font('BodyBold').fillColor(invStatus(inv) === 'paid' ? '#7BE0A8' : BRAND_ACCENT).text(statusLabel, 355, 92, { width: 200, align: 'right' });
 
   // ---- bill to ----
   doc.rect(40, 138, 250, 64).fill('#F4F1EA');
-  doc.fillColor(BRAND_DARK).fontSize(8).font('Helvetica-Bold').text('BILL TO', 52, 148);
-  doc.font('Helvetica').fontSize(11);
+  doc.fillColor(BRAND_DARK).fontSize(8).font('BodyBold').text('BILL TO', 52, 148);
+  doc.font('Body').fontSize(11);
   doc.text(inv.company || inv.name, 52, 164);
   doc.fontSize(8.5).fillColor('#555');
   doc.text([inv.phone, inv.email].filter(Boolean).join('  ·  '), 52, 181);
@@ -1027,13 +1030,13 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   // ---- items table ----
   const top = 226;
   doc.rect(40, top, 515.28, 20).fill(BRAND_DARK);
-  doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#FFFFFF');
+  doc.fontSize(8.5).font('BodyBold').fillColor('#FFFFFF');
   doc.text('DESCRIPTION', 52, top + 6, { width: 260 });
   doc.text('QTY', 320, top + 6, { width: 34, align: 'right' });
   doc.text('UNIT PRICE', 360, top + 6, { width: 80, align: 'right' });
   doc.text('AMOUNT', 450, top + 6, { width: 93, align: 'right' });
   let y = top + 20;
-  doc.font('Helvetica').fillColor('#222').fontSize(9.5);
+  doc.font('Body').fillColor('#222').fontSize(9.5);
   for (const it of items) {
     if (y > 620) { doc.addPage(); y = 40; }
     doc.rect(40, y, 515.28, 24).fill('#FAF8F3');
@@ -1047,7 +1050,7 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
 
   // ---- totals ----
   const t = (label, val, opts = {}) => {
-    doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(opts.bold ? 12 : 9.5).fillColor(opts.color || '#222');
+    doc.font(opts.bold ? 'BodyBold' : 'Body').fontSize(opts.bold ? 12 : 9.5).fillColor(opts.color || '#222');
     doc.text(label, 300, y, { width: 140, align: 'right' });
     doc.text(val, 450, y, { width: 93, align: 'right' });
     y += opts.bold ? 24 : 18;
@@ -1057,19 +1060,19 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   else t('VAT', 'Not applicable');
   if (inv.fee > 0) t(`Processing fee (${(inv.fee_rate * 100).toFixed(1)}%)`, money(inv.fee));
   doc.rect(300, y - 4, 243, 26).fill(BRAND_DARK);
-  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(12).text('TOTAL', 310, y + 4, { width: 130, align: 'right' });
+  doc.fillColor('#FFFFFF').font('BodyBold').fontSize(12).text('TOTAL', 310, y + 4, { width: 130, align: 'right' });
   doc.text(money(grand), 450, y + 4, { width: 80, align: 'right' });
   y += 34;
   if (cur !== 'NGN') {
-    doc.font('Helvetica').fontSize(8.5).fillColor('#555')
+    doc.font('Body').fontSize(8.5).fillColor('#555')
       .text(`Naira equivalent @ ${Number(inv.fx_rate).toLocaleString()} ≈ ₦${Number(inv.ngn_total).toLocaleString()}`, 300, y, { width: 243, align: 'right' });
     y += 16;
   }
 
   // ---- payment details ----
   doc.rect(40, y + 6, 515.28, 74).fill('#F4F1EA');
-  doc.fillColor(BRAND_DARK).fontSize(8).font('Helvetica-Bold').text('HOW TO PAY', 52, y + 14);
-  doc.font('Helvetica').fontSize(9.5).fillColor('#333');
+  doc.fillColor(BRAND_DARK).fontSize(8).font('BodyBold').text('HOW TO PAY', 52, y + 14);
+  doc.font('Body').fontSize(9.5).fillColor('#333');
   if (inv.account_number) {
     doc.text(`Bank transfer: ${inv.bank_name || 'Bank'}  ·  ${inv.account_number}  ·  ${biz}`, 52, y + 30);
   } else {
@@ -1079,7 +1082,7 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   y += 94;
 
   doc.fillColor(BRAND_ACCENT).rect(0, 800, 595.28, 3).fill(BRAND_ACCENT);
-  doc.fontSize(8).fillColor('#888').font('Helvetica')
+  doc.fontSize(8).fillColor('#888').font('Body')
     .text('Generated by OmniCRM · Thank you for your business.', 40, 808, { width: 515, align: 'center' });
 
   doc.end();
@@ -2169,8 +2172,10 @@ app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) 
     db.prepare('UPDATE orders SET total_ngn = ? WHERE id = ?').run(finalTotal, o.id);
   }
   // auto-raise the invoice (draft -> visible to the rep when delivered)
-  const n = db.prepare('SELECT COUNT(*) AS c FROM invoices WHERE user_id = ?').get(req.user.id).c;
-  const number = `INV-2026-${String(n + 1).padStart(3, '0')}`;
+  const y = new Date().getFullYear();
+  const mx = db.prepare("SELECT number FROM invoices WHERE number LIKE ? ORDER BY number DESC LIMIT 1").get(`INV-${y}-%`);
+  const ln = mx ? (parseInt(String(mx.number).split('-').pop(), 10) || 0) : 0;
+  const number = `INV-${y}-${String(ln + 1).padStart(3, '0')}`;
   const due = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
   const inv = db.prepare(`INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, total, tax_rate, tax, currency, fx_rate, ngn_total)
     VALUES (?, ?, ?, 'draft', date('now'), ?, ?, ?, 7.5, ?, 'NGN', 1, ?)`)
