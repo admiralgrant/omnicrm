@@ -434,3 +434,11 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 .line-total { font-weight: 800; font-size: 16px; color: var(--text); padding: 9px 0; }
 .inv-kpis { border-top: 1px dashed var(--line); padding-top: 6px; }
 .inv-kpis .inv-line b { font-size: 16px; }
+/* company profile + logo */
+.bio-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.logo-upload { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: 10px; cursor: pointer; font-size: 13px; color: var(--text-2); background: var(--surface-2); }
+.logo-upload.sm { padding: 5px 9px; font-size: 12px; }
+.profile-logo-row { display: flex; align-items: center; gap: 12px; }
+.profile-logo { width: 52px; height: 52px; border-radius: 12px; object-fit: contain; background: #fff; border: 1px solid var(--line); padding: 4px; }
+.profile-logo.empty { display: flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 12px; background: var(--surface-2); border: 1px dashed var(--line); color: var(--text-2); font-size: 11px; }
+.logo-mark-img { width: 30px; height: 30px; border-radius: 8px; object-fit: contain; background: #fff; padding: 2px; }
