@@ -1279,7 +1279,7 @@ app.get('/org/profile', { preHandler: [requireAuth, gate('dashboard')] }, async 
       phone: u?.phone || '',
       account_number: u?.account_number || '',
       bank_name: u?.bank_name || '',
-      logo_url: u?.logo ? `/api/org/logo?v=${encodeURIComponent(u.logo)}` : null,
+      logo_url: u?.logo ? `/org/logo?v=${encodeURIComponent(u.logo)}` : null,
     },
   };
 });
@@ -1298,17 +1298,33 @@ app.post('/org/logo', { preHandler: requireAuth }, async (req, reply) => {
   const file = saveLogo(logo_data_url, req.user.id);
   if (!file) return reply.code(400).send({ error: 'A valid PNG or JPG image is required.' });
   db.prepare('UPDATE users SET logo = ? WHERE id = ?').run(file, req.user.id);
-  return { ok: true, logo_url: `/api/org/logo?v=${encodeURIComponent(file)}` };
+  return { ok: true, logo_url: `/org/logo?v=${encodeURIComponent(file)}` };
 });
 
-app.get('/org/logo', { preHandler: requireAuth }, async (req, reply) => {
-  const u = db.prepare('SELECT logo FROM users WHERE id = ?').get(req.user.id);
+// public logo route: readable by <img> tags (no auth header needed)
+app.get('/org-logo/:file', async (req, reply) => {
+  const f = path.basename(req.params.file);
+  const p = path.join(LOGO_DIR, f);
+  if (!fs.existsSync(p)) return reply.code(404).send({ error: 'Logo not found' });
+  const ext = path.extname(p).slice(1);
+  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  return reply.header('Content-Type', mime).header('Cache-Control', 'public, max-age=31536000, immutable').send(fs.readFileSync(p));
+});
+
+app.get('/org/logo', async (req, reply) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.auth || '';
+  let uid = null;
+  if (token) {
+    try { uid = jwt.verify(token, JWT_SECRET).id; } catch { /* fallthrough */ }
+  }
+  if (!uid) return reply.code(404).send({ error: 'No logo uploaded' });
+  const u = db.prepare('SELECT logo FROM users WHERE id = ?').get(uid);
   if (!u?.logo) return reply.code(404).send({ error: 'No logo uploaded' });
   const p = path.join(LOGO_DIR, u.logo);
   if (!fs.existsSync(p)) return reply.code(404).send({ error: 'Logo file missing' });
   const ext = path.extname(p).slice(1);
   const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-  return reply.header('Content-Type', mime).header('Cache-Control', 'private, max-age=300').send(fs.readFileSync(p));
+  return reply.header('Content-Type', mime).header('Cache-Control', 'public, max-age=31536000, immutable').send(fs.readFileSync(p));
 });
 
 // ---- org feature switches (admin) ----
