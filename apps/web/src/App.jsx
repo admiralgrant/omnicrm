@@ -45,6 +45,7 @@ export default function App() {
   const [inboxChannels, setInboxChannels] = useState([]);
   const [inboxChannel, setInboxChannel] = useState('whatsapp');
   const [tierData, setTierData] = useState(null);
+  const [orgProfile, setOrgProfile] = useState(null);
   const [staffAdd, setStaffAdd] = useState(null); // quick add-staff form on Account
   const [activeContact, setActiveContact] = useState(null);
   const [msgs, setMsgs] = useState([]);
@@ -169,6 +170,7 @@ export default function App() {
         setExpenseData(ex); setInboxChannels(ch.channels || []);
         if (ex.see_all) setExpenseReport(await api(`/expenses/report?month=${new Date().toISOString().slice(0, 7)}`));
         try { setTierData(await api('/org/tier')); } catch { /* staff-safe */ }
+        try { setOrgProfile((await api('/org/profile')).profile); } catch { /* staff-safe */ }
         try { setOrgFeats((await api('/org/features')).features); } catch { /* staff-safe */ }
         try { setHr(await api('/hr-dashboard')); } catch { /* non-HR staff */ }
         try { setPayrollRuns((await api('/payroll/runs')).runs); } catch { /* non-HR */ }
@@ -286,8 +288,8 @@ export default function App() {
     setMe(d.user);
     setToken(d.token);
   };
-  const register = async (email, password, name, business_name) => {
-    const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, business_name }) });
+  const register = async (email, password, name, business_name, address, phone, account_number, bank_name, logo_data_url) => {
+    const d = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, business_name, address, phone, account_number, bank_name, logo_data_url }) });
     localStorage.setItem(tokenKey, d.token);
     setAuthMode('landing');
     setView('dashboard');
@@ -610,7 +612,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo">{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -623,7 +625,7 @@ export default function App() {
       {/* mobile drawer: every destination behind the hamburger */}
       <div className={`drawer-backdrop ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
       <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
-        <div className="logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo">{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setDrawerOpen(false); }}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -636,7 +638,7 @@ export default function App() {
       <main className="main">
         <div className="topbar">
           <button className="icon-btn hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu"><Icon name="menu" size={22} /></button>
-          <div className="logo topbar-logo"><div className="logo-mark">O</div><div><b>OmniCRM</b><span>beta</span></div></div>
+          <div className="logo topbar-logo">{orgProfile?.logo_url ? <img className="logo-mark-img" src={API + orgProfile.logo_url} alt="logo" /> : <div className="logo-mark">O</div>}<div><b>OmniCRM</b><span>beta</span></div></div>
           <div className="topbar-actions">
             <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle dark mode">
               <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} />
@@ -1473,6 +1475,40 @@ export default function App() {
                 <div className="inv-line"><span>Business</span><span>{account.user.business_name || ', '}</span></div>
                 <div className="inv-line"><span>Owner</span><span>{account.user.name}</span></div>
                 <div className="inv-line"><span>Email</span><span>{account.user.email}</span></div>
+                {orgProfile && (
+                  <div className="tier-box">
+                    <div className="profile-logo-row">
+                      {orgProfile.logo_url ? <img className="profile-logo" src={API + orgProfile.logo_url} alt="logo" /> : <div className="profile-logo empty">Logo</div>}
+                      <div style={{ flex: 1 }}>
+                        <b>Company profile</b>
+                        <p className="muted" style={{ margin: '2px 0 0' }}>Shows on your invoices and across the app.</p>
+                      </div>
+                      {!isGuest && !me?.dept && (
+                        <label className="logo-upload sm">
+                          <Icon name="file" size={12} /> {orgProfile.logo_url ? 'Change' : 'Upload'}
+                          <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            const url = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
+                            await api('/org/logo', { method: 'POST', body: JSON.stringify({ logo_data_url: url }) });
+                            setOrgProfile((await api('/org/profile')).profile);
+                          }} />
+                        </label>
+                      )}
+                    </div>
+                    {!isGuest && !me?.dept ? (
+                      <div className="quick-form" style={{ paddingTop: 8 }}>
+                        <input placeholder="Address" defaultValue={orgProfile.address} onBlur={async (e) => { await api('/org/profile', { method: 'PUT', body: JSON.stringify({ address: e.target.value }) }); }} />
+                        <input placeholder="Phone" defaultValue={orgProfile.phone} onBlur={async (e) => { await api('/org/profile', { method: 'PUT', body: JSON.stringify({ phone: e.target.value }) }); }} />
+                        <input placeholder="Bank name" defaultValue={orgProfile.bank_name} onBlur={async (e) => { await api('/org/profile', { method: 'PUT', body: JSON.stringify({ bank_name: e.target.value }) }); }} />
+                        <input placeholder="Account number" defaultValue={orgProfile.account_number} onBlur={async (e) => { await api('/org/profile', { method: 'PUT', body: JSON.stringify({ account_number: e.target.value }) }); }} />
+                        <span className="muted" style={{ fontSize: 11 }}>Edits save when you leave each field.</span>
+                      </div>
+                    ) : (
+                      <div className="inv-line"><span>Address</span><span>{orgProfile.address || ', '}</span></div>
+                    )}
+                  </div>
+                )}
                 <div className="inv-line"><span>Plan</span><span className="chip closed">{tierData ? `${tierData.label} · ${tierData.price}` : account.plan}</span></div>
                 {tierData && (
                   <div className="tier-box">
@@ -3095,6 +3131,11 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [business, setBusiness] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [logo, setLogo] = useState(null);
   const [err, setErr] = useState('');
   const [showPw, setShowPw] = useState(false);
   const submit = async (e) => {
@@ -3102,7 +3143,17 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
     setErr('');
     try {
       if (mode === 'login') await onLogin(email, password);
-      else await onRegister(email, password, name, business);
+      else {
+        let logo_data_url = null;
+        if (logo) {
+          logo_data_url = await new Promise((resolve) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(fr.result);
+            fr.readAsDataURL(logo);
+          });
+        }
+        await onRegister(email, password, name, business, address, phone, accountNumber, bankName, logo_data_url);
+      }
     } catch (e2) { setErr(e2.message); }
   };
   return (
@@ -3116,6 +3167,17 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
             <>
               <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} required />
               <input placeholder="Business name" value={business} onChange={(e) => setBusiness(e.target.value)} />
+              <input placeholder="Business address" value={address} onChange={(e) => setAddress(e.target.value)} />
+              <input placeholder="Business phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <div className="bio-row">
+                <input placeholder="Bank name" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+                <input placeholder="Account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} />
+              </div>
+              <label className="logo-upload">
+                <Icon name="file" size={14} /> {logo ? logo.name : 'Upload your logo (optional)'}
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogo(e.target.files?.[0] || null)} hidden />
+              </label>
+              {logo && <p className="muted">Logo shows on your invoices and across the app.</p>}
             </>
           )}
           <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
