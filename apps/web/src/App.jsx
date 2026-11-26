@@ -633,7 +633,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -646,7 +646,7 @@ export default function App() {
       {/* mobile drawer: every destination behind the hamburger */}
       <div className={`drawer-backdrop ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
       <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
-        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
         {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
           <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setDrawerOpen(false); }}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
@@ -659,7 +659,7 @@ export default function App() {
       <main className="main">
         <div className="topbar">
           <button className="icon-btn hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu"><Icon name="menu" size={22} /></button>
-          <div className="logo topbar-logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b>OmniCRM</b><span>beta</span></div></div>
+          <div className="logo topbar-logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
           <div className="topbar-actions">
             <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle dark mode">
               <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} />
@@ -2825,7 +2825,7 @@ function SuperAdminApp() {
   return (
     <div className="platform-shell">
       <header className="platform-top">
-        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>platform console</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>platform console</span></div></div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className="chip closed">super admin</span>
           <button className="btn-ghost sm" onClick={load}>Refresh</button>
@@ -3048,7 +3048,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
   return (
     <div className="landing">
       <header className="landing-nav">
-        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
         <nav className="landing-links">
           <a href="#features">Features</a>
           <a href="#categories">Who it's for</a>
@@ -3124,7 +3124,7 @@ function Landing({ onLogin, onStart, theme, onToggleTheme }) {
       </section>
 
       <footer className="landing-footer">
-        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
         <p className="muted">Made for Nigerian businesses · Lagos, Nigeria</p>
         <p className="muted">© 2026 OmniCRM · <a href="/privacy.html" style={{ color: 'inherit' }}>Privacy & AI Disclosure</a></p>
       </footer>
@@ -3202,7 +3202,7 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
     <div className="center login">
       <div className="card login-card">
         <button className="btn-ghost back" onClick={onBack}>← Back</button>
-        <div className="logo"><BrandMark className="logo-mark-img" /><div><b>OmniCRM</b><span>beta</span></div></div>
+        <div className="logo"><BrandMark className="logo-mark-img" /><div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
         <h3>{mode === 'login' ? 'Welcome back' : 'Create your business'}</h3>
         <form onSubmit={submit}>
           {mode === 'register' && (
