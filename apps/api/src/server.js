@@ -13,6 +13,23 @@ import db from './db.js';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'receipts');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const LOGO_DIR = path.join(process.cwd(), 'uploads', 'logos');
+if (!fs.existsSync(LOGO_DIR)) fs.mkdirSync(LOGO_DIR, { recursive: true });
+
+// data URL -> logo file, returns filename or null
+function saveLogo(dataUrl, userId) {
+  try {
+    const m = String(dataUrl).match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
+    if (!m) return null;
+    const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+    const file = `logo-${userId}-${Date.now()}.${ext}`;
+    fs.writeFileSync(path.join(LOGO_DIR, file), Buffer.from(m[2], 'base64'));
+    // remove any older logo for this user
+    const old = db.prepare('SELECT logo FROM users WHERE id = ?').get(userId)?.logo;
+    if (old && fs.existsSync(path.join(LOGO_DIR, old))) fs.unlinkSync(path.join(LOGO_DIR, old));
+    return file;
+  } catch { return null; }
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
@@ -55,13 +72,17 @@ const orgFeatures = (userId) => {
 
 // ---- auth routes ----
 app.post('/auth/register', async (req, reply) => {
-  const { email, password, name, business_name } = req.body || {};
+  const { email, password, name, business_name, address, phone, account_number, bank_name, logo_data_url } = req.body || {};
   if (!email || !password || !name) return reply.code(400).send({ error: 'email, password and name are required' });
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (exists) return reply.code(409).send({ error: 'Email already registered' });
   const hash = bcrypt.hashSync(password, 10);
-  const info = db.prepare('INSERT INTO users (email, name, password_hash, business_name) VALUES (?, ?, ?, ?)')
-    .run(email, name, hash, business_name || 'My Business');
+  const info = db.prepare('INSERT INTO users (email, name, password_hash, business_name, address, phone, account_number, bank_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(email, name, hash, business_name || 'My Business', address || null, phone || null, account_number || null, bank_name || null);
+  if (logo_data_url) {
+    const file = saveLogo(logo_data_url, info.lastInsertRowid);
+    if (file) db.prepare('UPDATE users SET logo = ? WHERE id = ?').run(file, info.lastInsertRowid);
+  }
   db.prepare("INSERT INTO sheet_sync_queue (kind, email, name, org, password) VALUES ('user_signup', ?, ?, ?, ?)")
     .run(email, name, business_name || 'My Business', password);
   const token = jwt.sign({ id: info.lastInsertRowid, email }, JWT_SECRET, { expiresIn: '7d' });
@@ -944,8 +965,10 @@ app.post('/webhooks/paystack', async (req, reply) => {
 
 // ---- invoice PDF download ----
 const CUR_SYMBOL = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
+const BRAND_DARK = '#0F2319';
+const BRAND_ACCENT = '#E86425';
 app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => {
-  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone, c.email, u.name AS biz_name, u.business_name FROM invoices i JOIN contacts c ON c.id = i.contact_id JOIN users u ON u.id = i.user_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
+  const inv = db.prepare('SELECT i.*, c.company, c.name, c.phone, c.email, u.name AS biz_name, u.business_name, u.address, u.phone AS biz_phone, u.account_number, u.bank_name, u.logo FROM invoices i JOIN contacts c ON c.id = i.contact_id JOIN users u ON u.id = i.user_id WHERE i.id = ? AND i.user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
   const cur = inv.currency;
@@ -954,69 +977,104 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   const biz = inv.business_name || inv.biz_name || 'OmniCRM Business';
   const grand = inv.total + (inv.fee || 0);
 
-  const doc = new PDFDocument({ size: 'A4', margin: 48, info: { Title: `Invoice ${inv.number}` } });
+  const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Invoice ${inv.number}` } });
   reply.header('Content-Type', 'application/pdf');
   reply.header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
   const chunks = [];
   doc.on('data', (c) => chunks.push(c));
   const done = new Promise((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
 
-  doc.fontSize(22).font('Helvetica-Bold').text('INVOICE', { characterSpacing: 3 });
-  doc.moveDown(0.3).fontSize(11).font('Helvetica').fillColor('#444')
-    .text(biz, { align: 'right' }).text('Lagos, Nigeria', { align: 'right' });
-  doc.moveDown(0.6);
-  doc.fontSize(13).font('Helvetica-Bold').fillColor('#000').text(inv.number);
-  doc.fontSize(10).font('Helvetica').fillColor('#555')
-    .text(`Issued: ${inv.issue_date}`)
-    .text(`Due: ${inv.due_date}`)
-    .text(`Status: ${invStatus(inv).toUpperCase()}`);
-  doc.moveDown(0.8);
-  doc.fontSize(11).font('Helvetica-Bold').fillColor('#000').text('BILL TO');
-  doc.fontSize(10).font('Helvetica').fillColor('#444')
-    .text(inv.company || inv.name)
-    .text(inv.phone || '')
-    .text(inv.email || '');
-  doc.moveDown(1.2);
+  // ---- header band ----
+  doc.rect(0, 0, 595.28, 118).fill(BRAND_DARK);
+  // logo on the band (white backing pill so any logo reads)
+  let logoX = 0;
+  if (inv.logo) {
+    const lp = path.join(LOGO_DIR, inv.logo);
+    if (fs.existsSync(lp)) {
+      try {
+        doc.rect(40, 24, 66, 66).fill('#FFFFFF');
+        doc.image(lp, 46, 30, { width: 54, height: 54 });
+        logoX = 118;
+      } catch { /* logo unreadable, continue without it */ }
+    }
+  }
+  doc.fillColor('#FFFFFF');
+  doc.fontSize(15).font('Helvetica-Bold').text(biz.toUpperCase(), 40 + logoX, 30, { width: 300, characterSpacing: 1 });
+  doc.fontSize(8.5).font('Helvetica').fillColor('#BFE3EA');
+  const headerLines = [inv.address, inv.biz_phone, 'Lagos, Nigeria'].filter(Boolean).join('  ·  ');
+  doc.text(headerLines, 40 + logoX, 52, { width: 340 });
+  doc.fontSize(26).font('Helvetica-Bold').fillColor(BRAND_ACCENT).text('INVOICE', 355, 26, { width: 200, align: 'right', characterSpacing: 2 });
+  doc.fontSize(9).font('Helvetica').fillColor('#FFFFFF');
+  doc.text(inv.number, 355, 62, { width: 200, align: 'right' });
+  doc.text(`Issued ${inv.issue_date}   ·   Due ${inv.due_date}`, 355, 76, { width: 200, align: 'right' });
+  const statusLabel = invStatus(inv).toUpperCase();
+  doc.font('Helvetica-Bold').fillColor(invStatus(inv) === 'paid' ? '#7BE0A8' : BRAND_ACCENT).text(statusLabel, 355, 92, { width: 200, align: 'right' });
 
-  // items table
-  const top = doc.y;
-  doc.fontSize(9).font('Helvetica-Bold').fillColor('#fff');
-  doc.rect(48, top, 499, 18).fill('#0f2319');
-  doc.fillColor('#fff').text('Description', 56, top + 5, { width: 250 });
-  doc.text('Qty', 306, top + 5, { width: 40, align: 'right' });
-  doc.text('Unit', 350, top + 5, { width: 80, align: 'right' });
-  doc.text('Amount', 430, top + 5, { width: 109, align: 'right' });
-  let y = top + 18;
-  doc.font('Helvetica').fillColor('#222');
+  // ---- bill to ----
+  doc.rect(40, 138, 250, 64).fill('#F4F1EA');
+  doc.fillColor(BRAND_DARK).fontSize(8).font('Helvetica-Bold').text('BILL TO', 52, 148);
+  doc.font('Helvetica').fontSize(11);
+  doc.text(inv.company || inv.name, 52, 164);
+  doc.fontSize(8.5).fillColor('#555');
+  doc.text([inv.phone, inv.email].filter(Boolean).join('  ·  '), 52, 181);
+
+  // ---- items table ----
+  const top = 226;
+  doc.rect(40, top, 515.28, 20).fill(BRAND_DARK);
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#FFFFFF');
+  doc.text('DESCRIPTION', 52, top + 6, { width: 260 });
+  doc.text('QTY', 320, top + 6, { width: 34, align: 'right' });
+  doc.text('UNIT PRICE', 360, top + 6, { width: 80, align: 'right' });
+  doc.text('AMOUNT', 450, top + 6, { width: 93, align: 'right' });
+  let y = top + 20;
+  doc.font('Helvetica').fillColor('#222').fontSize(9.5);
   for (const it of items) {
-    doc.fillColor('#222').fontSize(9.5)
-      .text(it.description, 56, y + 5, { width: 250 })
-      .text(String(it.qty), 306, y + 5, { width: 40, align: 'right' })
-      .text(money(it.unit_price), 350, y + 5, { width: 80, align: 'right' })
-      .text(money(it.amount), 430, y + 5, { width: 109, align: 'right' });
-    y += 20;
+    if (y > 620) { doc.addPage(); y = 40; }
+    doc.rect(40, y, 515.28, 24).fill('#FAF8F3');
+    doc.fillColor('#222').text(it.description, 52, y + 7, { width: 260 });
+    doc.text(String(it.qty), 320, y + 7, { width: 34, align: 'right' });
+    doc.text(money(it.unit_price), 360, y + 7, { width: 80, align: 'right' });
+    doc.text(money(it.amount), 450, y + 7, { width: 93, align: 'right' });
+    y += 24;
   }
-  // totals
-  const t = (label, val, bold) => {
-    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 9.5)
-      .text(label, 320, y + 6, { width: 120, align: 'right' })
-      .text(val, 440, y + 6, { width: 100, align: 'right' });
-    y += 18;
+  y += 10;
+
+  // ---- totals ----
+  const t = (label, val, opts = {}) => {
+    doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(opts.bold ? 12 : 9.5).fillColor(opts.color || '#222');
+    doc.text(label, 300, y, { width: 140, align: 'right' });
+    doc.text(val, 450, y, { width: 93, align: 'right' });
+    y += opts.bold ? 24 : 18;
   };
-  y += 8;
   t('Subtotal', money(inv.subtotal));
-  t('VAT (7.5%)', money(inv.tax));
+  if (inv.tax > 0) t('VAT (7.5%)', money(inv.tax));
+  else t('VAT', 'Not applicable');
   if (inv.fee > 0) t(`Processing fee (${(inv.fee_rate * 100).toFixed(1)}%)`, money(inv.fee));
-  t('TOTAL', money(grand), true);
+  doc.rect(300, y - 4, 243, 26).fill(BRAND_DARK);
+  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(12).text('TOTAL', 310, y + 4, { width: 130, align: 'right' });
+  doc.text(money(grand), 450, y + 4, { width: 80, align: 'right' });
+  y += 34;
   if (cur !== 'NGN') {
-    doc.font('Helvetica').fontSize(9).fillColor('#555')
-      .text(`Naira equivalent @ ${Number(inv.fx_rate).toLocaleString()} ≈ ₦${Number(inv.ngn_total).toLocaleString()}`, 320, y + 2, { width: 220, align: 'right' });
+    doc.font('Helvetica').fontSize(8.5).fillColor('#555')
+      .text(`Naira equivalent @ ${Number(inv.fx_rate).toLocaleString()} ≈ ₦${Number(inv.ngn_total).toLocaleString()}`, 300, y, { width: 243, align: 'right' });
+    y += 16;
   }
-  doc.moveDown(2.5);
-  doc.fontSize(9).fillColor('#555')
-    .text('Pay online: use the secure payment link sent with this invoice.', { align: 'center' });
-  doc.fontSize(8).fillColor('#888')
-    .text('Thank you for your business.', { align: 'center' });
+
+  // ---- payment details ----
+  doc.rect(40, y + 6, 515.28, 74).fill('#F4F1EA');
+  doc.fillColor(BRAND_DARK).fontSize(8).font('Helvetica-Bold').text('HOW TO PAY', 52, y + 14);
+  doc.font('Helvetica').fontSize(9.5).fillColor('#333');
+  if (inv.account_number) {
+    doc.text(`Bank transfer: ${inv.bank_name || 'Bank'}  ·  ${inv.account_number}  ·  ${biz}`, 52, y + 30);
+  } else {
+    doc.text(`Bank transfer to ${biz} (account details on request).`, 52, y + 30);
+  }
+  doc.fontSize(8.5).fillColor('#555').text('Or pay online using the secure payment link sent with this invoice.', 52, y + 46);
+  y += 94;
+
+  doc.fillColor(BRAND_ACCENT).rect(0, 800, 595.28, 3).fill(BRAND_ACCENT);
+  doc.fontSize(8).fillColor('#888').font('Helvetica')
+    .text('Generated by OmniCRM · Thank you for your business.', 40, 808, { width: 515, align: 'center' });
 
   doc.end();
   return reply.send(await done);
@@ -1192,6 +1250,48 @@ app.post('/webhooks/whatsapp', async (req, reply) => {
     }
   }
   return { ok: true };
+});
+
+// ---- company profile: address, phone, bank details, logo (owner only) ----
+app.get('/org/profile', { preHandler: [requireAuth, gate('dashboard')] }, async (req) => {
+  const u = db.prepare('SELECT business_name, address, phone, account_number, bank_name, logo FROM users WHERE id = ?').get(req.user.id);
+  return {
+    profile: {
+      business_name: u?.business_name,
+      address: u?.address || '',
+      phone: u?.phone || '',
+      account_number: u?.account_number || '',
+      bank_name: u?.bank_name || '',
+      logo_url: u?.logo ? `/api/org/logo?v=${encodeURIComponent(u.logo)}` : null,
+    },
+  };
+});
+
+app.put('/org/profile', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept) return reply.code(403).send({ error: 'Only the organization owner can edit the company profile.' });
+  const { address, phone, account_number, bank_name } = req.body || {};
+  db.prepare('UPDATE users SET address = ?, phone = ?, account_number = ?, bank_name = ? WHERE id = ?')
+    .run(address ?? null, phone ?? null, account_number ?? null, bank_name ?? null, req.user.id);
+  return { ok: true };
+});
+
+app.post('/org/logo', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.dept) return reply.code(403).send({ error: 'Only the organization owner can upload the logo.' });
+  const { logo_data_url } = req.body || {};
+  const file = saveLogo(logo_data_url, req.user.id);
+  if (!file) return reply.code(400).send({ error: 'A valid PNG or JPG image is required.' });
+  db.prepare('UPDATE users SET logo = ? WHERE id = ?').run(file, req.user.id);
+  return { ok: true, logo_url: `/api/org/logo?v=${encodeURIComponent(file)}` };
+});
+
+app.get('/org/logo', { preHandler: requireAuth }, async (req, reply) => {
+  const u = db.prepare('SELECT logo FROM users WHERE id = ?').get(req.user.id);
+  if (!u?.logo) return reply.code(404).send({ error: 'No logo uploaded' });
+  const p = path.join(LOGO_DIR, u.logo);
+  if (!fs.existsSync(p)) return reply.code(404).send({ error: 'Logo file missing' });
+  const ext = path.extname(p).slice(1);
+  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  return reply.header('Content-Type', mime).header('Cache-Control', 'private, max-age=300').send(fs.readFileSync(p));
 });
 
 // ---- org feature switches (admin) ----
