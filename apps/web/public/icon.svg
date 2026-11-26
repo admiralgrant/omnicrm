@@ -1,5 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect width="100" height="100" rx="22" fill="#0b8f5c"/>
-  <circle cx="50" cy="50" r="30" fill="none" stroke="#fff" stroke-width="10"/>
-  <circle cx="50" cy="50" r="14" fill="#12b57b"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22543D"/>
+      <stop offset="1" stop-color="#0B1F15"/>
+    </linearGradient>
+  </defs>
+  <!-- tile -->
+  <rect x="0" y="0" width="1024" height="1024" rx="235" fill="url(#g)"/>
+  <!-- O ring -->
+  <circle cx="512" cy="512" r="258" fill="none" stroke="#FFFFFF" stroke-width="92"/>
+  <!-- satellite dot (upper right, 42 deg) -->
+  <circle cx="703.7" cy="339.4" r="124" fill="#E86425"/>
+  <circle cx="703.7" cy="317" r="68" fill="#CB5218"/>
+  <!-- hub -->
+  <circle cx="512" cy="512" r="31" fill="#FFFFFF"/>
 </svg>
