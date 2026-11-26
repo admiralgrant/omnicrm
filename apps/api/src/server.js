@@ -676,7 +676,7 @@ let FX_CACHE = { rates: null, at: 0, source: 'fallback' };
 async function fxRates() {
   if (FX_CACHE.rates && Date.now() - FX_CACHE.at < 10 * 60 * 1000) return FX_CACHE;
   try {
-    const res = await fetch('https://open.er-api.com/v6/latest/USD');
+    const res = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(8000) });
     const d = await res.json();
     if (d.result === 'success' && d.rates?.NGN) {
       const ngnPerUsd = d.rates.NGN;
@@ -774,10 +774,11 @@ app.put('/invoices/:id', { preHandler: requireAuth }, async (req, reply) => {
   const subtotal = currentItems.reduce((s, it) => s + it.amount, 0);
   const tax = r2(subtotal * 0.075);
   const total = r2(subtotal + tax);
-  const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE;
-  const fee = r2(total * feeRate);
+  // Conversion fee is NOT charged on the invoice; it applies only when payment is processed via the CRM.
+  const feeRate = 0;
+  const fee = 0;
   db.prepare('UPDATE invoices SET due_date = ?, currency = ?, fx_rate = ?, fee_rate = ?, fee = ?, subtotal = ?, tax = ?, total = ?, ngn_total = ? WHERE id = ? AND user_id = ?')
-    .run(due_date || inv.due_date, cur, rate, feeRate, fee, subtotal, tax, total, Math.round((total + fee) * rate), inv.id, req.user.id);
+    .run(due_date || inv.due_date, cur, rate, feeRate, fee, subtotal, tax, total, Math.round(total * rate), inv.id, req.user.id);
   return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
 });
 
@@ -801,9 +802,10 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
   const taxRate = vatOn ? 7.5 : 0; // Nigerian VAT, optional per invoice
   const tax = vatOn ? r2(subtotal * (taxRate / 100)) : 0;
   const total = r2(subtotal + tax);
-  const feeRate = cur === 'NGN' ? 0 : FX_FEE_RATE; // conversion processing fee
-  const fee = r2(total * feeRate);
-  const grandTotal = r2(total + fee);
+  // Conversion fee is NOT charged on the invoice; it applies only when payment is processed via the CRM.
+  const feeRate = 0;
+  const fee = 0;
+  const grandTotal = total;
   const ngnTotal = Math.round(grandTotal * rate);
   const year = new Date().getFullYear();
   const maxRow = db.prepare("SELECT number FROM invoices WHERE number LIKE ? ORDER BY number DESC LIMIT 1").get(`INV-${year}-%`);
@@ -901,8 +903,10 @@ app.get('/pay/:token', async (req, reply) => {
     WHERE i.pay_token = ?`).get(req.params.token);
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(inv.id);
+  // Conversion fee applies only when payment is processed through the CRM (foreign-currency invoices).
+  const fee = inv.currency !== 'NGN' ? Math.round(inv.total * FX_FEE_RATE * 100) / 100 : 0;
   return {
-    invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total, fee: inv.fee, fee_rate: inv.fee_rate, currency: inv.currency, fx_rate: inv.fx_rate, ngn_total: inv.ngn_total || inv.total },
+    invoice: { id: inv.id, number: inv.number, company: inv.company || inv.name, status: inv.status, issue_date: inv.issue_date, due_date: inv.due_date, subtotal: inv.subtotal, tax: inv.tax, total: inv.total, fee, fee_rate: fee > 0 ? FX_FEE_RATE : 0, currency: inv.currency, fx_rate: inv.fx_rate, ngn_total: inv.ngn_total || inv.total },
     items,
     demo: !paystackEnabled(),
   };
@@ -914,7 +918,9 @@ app.post('/pay/:token/initialize', async (req, reply) => {
   if (!inv) return reply.code(404).send({ error: 'Invoice link not found' });
   if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already paid' });
   // Naira invoices settle in NGN; foreign-currency invoices settle in USD on Paystack's rails.
-  const grand = inv.total + (inv.fee || 0);
+  // The FX conversion fee is applied here, at payment time, never on the invoice itself.
+  const fxFee = inv.currency !== 'NGN' ? Math.round(inv.total * FX_FEE_RATE * 100) / 100 : 0;
+  const grand = inv.total + fxFee;
   let payCurrency = 'NGN';
   let amount = Math.round(grand * 100); // kobo
   if (inv.currency !== 'NGN') {
@@ -995,14 +1001,17 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
 
   // ---- header band ----
   doc.rect(0, 0, 595.28, 118).fill(BRAND_DARK);
-  // logo on the band (white backing pill so any logo reads)
+  // logo on the band (white backing pill so any logo reads; original aspect ratio, never distorted)
   let logoX = 0;
   if (inv.logo) {
     const lp = path.join(LOGO_DIR, inv.logo);
     if (fs.existsSync(lp)) {
       try {
         doc.rect(40, 24, 66, 66).fill('#FFFFFF');
-        doc.image(lp, 46, 30, { width: 54, height: 54 });
+        const dims = doc.openImage(lp);
+        const scale = Math.min(54 / dims.width, 54 / dims.height);
+        const w = dims.width * scale; const h = dims.height * scale;
+        doc.image(lp, 46 + (54 - w) / 2, 30 + (54 - h) / 2, { width: w, height: h });
         logoX = 118;
       } catch { /* logo unreadable, continue without it */ }
     }
@@ -1058,7 +1067,6 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
   t('Subtotal', money(inv.subtotal));
   if (inv.tax > 0) t('VAT (7.5%)', money(inv.tax));
   else t('VAT', 'Not applicable');
-  if (inv.fee > 0) t(`Processing fee (${(inv.fee_rate * 100).toFixed(1)}%)`, money(inv.fee));
   doc.rect(300, y - 4, 243, 26).fill(BRAND_DARK);
   doc.fillColor('#FFFFFF').font('BodyBold').fontSize(12).text('TOTAL', 310, y + 4, { width: 130, align: 'right' });
   doc.text(money(grand), 450, y + 4, { width: 80, align: 'right' });
@@ -1083,7 +1091,7 @@ app.get('/invoices/:id/pdf', { preHandler: requireAuth }, async (req, reply) => 
 
   doc.fillColor(BRAND_ACCENT).rect(0, 800, 595.28, 3).fill(BRAND_ACCENT);
   doc.fontSize(8).fillColor('#888').font('Body')
-    .text('Generated by OmniCRM · Thank you for your business.', 40, 808, { width: 515, align: 'center' });
+    .text('Powered by OmniCRM', 40, 808, { width: 515, align: 'center' });
 
   doc.end();
   return reply.send(await done);
@@ -1304,7 +1312,7 @@ app.get('/org/logo', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 // ---- org feature switches (admin) ----
-const ALL_SECTIONS = ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'mail', 'followups', 'feedback', 'reports', 'pipeline', 'hr', 'ads', 'wallet', 'expenses', 'chat', 'product', 'inventory', 'sales', 'support', 'account'];
+const ALL_SECTIONS = ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'mail', 'followups', 'feedback', 'reports', 'pipeline', 'hr', 'ads', 'wallet', 'expenses', 'chat', 'product', 'inventory', 'sales', 'support', 'account', 'profile', 'settings'];
 const TIERS = {
   basic: {
     label: 'Basic',
@@ -1312,7 +1320,7 @@ const TIERS = {
     trial: '₦5,999 first month',
     staff_cap: 1,
     contact_cap: 100,
-    features: ['dashboard', 'customers', 'product', 'inventory', 'invoices', 'expenses'],
+    features: ['dashboard', 'customers', 'product', 'inventory', 'invoices', 'expenses', 'profile'],
     channels: [],
   },
   start: {
@@ -1320,7 +1328,7 @@ const TIERS = {
     price: '₦24,999/mo',
     staff_cap: 3,
     contact_cap: 500,
-    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'sales'],
+    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'sales', 'profile', 'settings'],
     channels: ['whatsapp'],
   },
   grow: {
@@ -1328,7 +1336,7 @@ const TIERS = {
     price: '₦39,999/mo',
     staff_cap: 10,
     contact_cap: 5000,
-    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'sales', 'support'],
+    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'sales', 'support', 'profile', 'settings'],
     channels: ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'],
   },
   scale: {
@@ -1336,7 +1344,7 @@ const TIERS = {
     price: '₦59,999/mo',
     staff_cap: 0,
     contact_cap: 0,
-    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'hr', 'ads', 'sales', 'support', 'account'],
+    features: ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'followups', 'feedback', 'reports', 'pipeline', 'mail', 'inventory', 'product', 'expenses', 'wallet', 'chat', 'hr', 'ads', 'sales', 'support', 'account', 'profile', 'settings'],
     channels: ['whatsapp', 'instagram', 'messenger', 'tiktok', 'email'],
   },
 };
