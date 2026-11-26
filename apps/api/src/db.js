@@ -589,4 +589,12 @@ const cCols = db.prepare('PRAGMA table_info(contacts)').all().map((c) => c.name)
 if (!cCols.includes('support_assignee')) db.exec('ALTER TABLE contacts ADD COLUMN support_assignee INTEGER');
 if (!cCols.includes('source')) db.exec("ALTER TABLE contacts ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
 
+// migration: company profile — address, phone, bank details and logo for premium invoices
+const uCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!uCols.includes('address')) db.exec('ALTER TABLE users ADD COLUMN address TEXT');
+if (!uCols.includes('phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
+if (!uCols.includes('account_number')) db.exec('ALTER TABLE users ADD COLUMN account_number TEXT');
+if (!uCols.includes('bank_name')) db.exec('ALTER TABLE users ADD COLUMN bank_name TEXT');
+if (!uCols.includes('logo')) db.exec('ALTER TABLE users ADD COLUMN logo TEXT');
+
 export default db;
