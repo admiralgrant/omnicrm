@@ -22,6 +22,15 @@ body { font-family: "DM Sans", system-ui, sans-serif; background: var(--bg); col
 .logo { display: flex; gap: 10px; align-items: center; padding: 0 8px 18px; }
 .logo-mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), #12b57b); display: grid; place-items: center; color: #fff; font-weight: 700; box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent) 60%, transparent); }
 .logo b { color: #fff; display: block; } .logo span { font-size: 11px; color: #7f9c8a; }
+/* OmniCRM wordmark: light = Omni sage-green + CRM orange; dark = Omni white + CRM orange */
+.logo .wm-omni, .logo .wm-crm { display: inline; font-weight: 700; }
+.logo .wm-omni { color: #2f7a52; }
+.logo .wm-crm { color: #E86425; }
+[data-theme="dark"] .logo .wm-omni { color: #fff; }
+[data-theme="dark"] .logo .wm-crm { color: #E86425; }
+/* sidebar & drawer are always dark green, so the wordmark stays white there */
+.sidebar .logo .wm-omni, .drawer .logo .wm-omni { color: #fff; }
+.sidebar .logo .wm-crm, .drawer .logo .wm-crm { color: #E86425; }
 .nav-item { padding: 11px 12px; border-radius: 11px; cursor: pointer; font-weight: 500; font-size: 14px; }
 @media (hover: hover) { .nav-item:hover { background: rgba(255,255,255,0.06); } }
 .nav-item.active { background: var(--accent); color: #fff; }
