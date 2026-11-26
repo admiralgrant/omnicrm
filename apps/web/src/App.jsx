@@ -300,7 +300,13 @@ export default function App() {
 
   const fmt = (n) => '₦' + Number(n).toLocaleString();
   const CURS = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
-  const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString();
+  const fmtCur = (n, cur) => (CURS[cur || 'NGN'] || '₦') + Number(n).toLocaleString(undefined, cur && cur !== 'NGN' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {});
+  // preview conversion: naira prices become the chosen currency before saving (server does the same)
+  const convPreview = (n, cur) => {
+    if (!cur || cur === 'NGN') return Math.round(n);
+    const rate = fx?.rates?.[cur];
+    return rate ? Math.round((n / rate) * 100) / 100 : n;
+  };
 
   const FRONT_ACCESS = {
     sales: ['dashboard', 'sales', 'customers', 'inbox', 'invoices', 'orders', 'mail', 'followups', 'feedback', 'reports', 'pipeline'],
@@ -2216,7 +2222,7 @@ export default function App() {
                   <option value="GBP">£ British Pound (GBP)</option>
                 </select>
                 {fx && newInv.currency !== 'NGN' && (
-                  <p className="muted fx-hint">1 {newInv.currency} ≈ {fmt(fx.rates[newInv.currency])} · {fx.source === 'live' ? 'live rate' : 'offline rate'}, books stay in naira automatically</p>
+                  <p className="muted fx-hint">1 {newInv.currency} ≈ {fmt(fx.rates[newInv.currency])} · prices are entered in naira and convert automatically, books stay in naira</p>
                 )}
                 <label className="inv-label">Items</label>
                 <p className="muted" style={{ margin: '4px 0 8px' }}>Pick from your products, or type a custom line.</p>
@@ -2280,7 +2286,7 @@ export default function App() {
                     </div>
                     <div className="inv-field line-total-field">
                       <label className="inv-label" style={{ marginTop: 0 }}>Line total</label>
-                      <div className="line-total">{fmt((Number(it.qty) || 0) * (Number(it.unit_price) || 0))}</div>
+                      <div className="line-total">{fmtCur(convPreview((Number(it.qty) || 0) * (Number(it.unit_price) || 0), newInv.currency), newInv.currency)}</div>
                     </div>
                     <button className="btn-ghost sm remove-line" onClick={() => setNewInv({ ...newInv, items: newInv.items.filter((_, j) => j !== idx) })}>Remove</button>
                   </div>
@@ -2294,9 +2300,9 @@ export default function App() {
                   </label>
                 </div>
                 <div className="inv-kpis" style={{ marginTop: 12 }}>
-                  <div className="inv-line"><span>Subtotal</span><span>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0), newInv.currency)}</span></div>
-                  {newInv.apply_vat !== false && <div className="inv-line"><span>VAT (7.5%)</span><span>{fmtCur(Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075), newInv.currency)}</span></div>}
-                  <div className="inv-line"><b>Total</b><b>{fmtCur(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) + (newInv.apply_vat !== false ? Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075) : 0), newInv.currency)}</b></div>
+                  <div className="inv-line"><span>Subtotal</span><span>{fmtCur(convPreview(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0), newInv.currency), newInv.currency)}</span></div>
+                  {newInv.apply_vat !== false && <div className="inv-line"><span>VAT (7.5%)</span><span>{fmtCur(convPreview(Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075), newInv.currency), newInv.currency)}</span></div>}
+                  <div className="inv-line"><b>Total</b><b>{fmtCur(convPreview(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) + (newInv.apply_vat !== false ? Math.round(newInv.items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0) * 0.075) : 0), newInv.currency), newInv.currency)}</b></div>
                 </div>
                 <div className="quick-actions">
                   <button className="btn-primary" onClick={saveInvoice}>{newInv.apply_vat !== false ? 'Save invoice (VAT included)' : 'Save invoice (no VAT)'}</button>
