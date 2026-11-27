@@ -86,6 +86,7 @@ export default function App() {
   const [prodForm, setProdForm] = useState(null);
   const [custView, setCustView] = useState('list'); // list | form
   const [custForm, setCustForm] = useState(null);
+  const [custLedger, setCustLedger] = useState(null); // {contact, balance, ledger_total, entries}
   const [tktView, setTktView] = useState('list'); // list | form
   const [tktForm, setTktForm] = useState(null);
   const [feedback, setFeedback] = useState([]);
@@ -511,12 +512,18 @@ export default function App() {
     setContacts(c.contacts);
   };
   const openNewCustomer = () => {
-    setCustForm({ id: null, name: '', company: '', phone: '', email: '', tags: 'lead', status: 'lead', deal_value_ngn: 0, debt_ngn: 0, staff_id: null });
+    setCustForm({ id: null, name: '', company: '', phone: '', email: '', tags: 'lead', status: 'lead', deal_value_ngn: 0, debt_ngn: 0, debt_note: '', staff_id: null });
     setCustView('form');
   };
   const openEditCustomer = (c) => {
-    setCustForm({ id: c.id, name: c.name, company: c.company || '', phone: c.phone || '', email: c.email || '', tags: c.tags || '', status: c.status || 'lead', deal_value_ngn: c.deal_value_ngn || 0, debt_ngn: c.debt_ngn || 0, staff_id: c.staff_id || null });
+    setCustForm({ id: c.id, name: c.name, company: c.company || '', phone: c.phone || '', email: c.email || '', tags: c.tags || '', status: c.status || 'lead', deal_value_ngn: c.deal_value_ngn || 0, debt_ngn: c.debt_ngn || 0, debt_note: '', staff_id: c.staff_id || null });
     setCustView('form');
+  };
+  const openLedger = async (c) => {
+    try {
+      const d = await api(`/contacts/${c.id}/ledger`);
+      setCustLedger({ ...d, contact: c });
+    } catch (e) { alert(e.message); }
   };
   const saveCustomer = async () => {
     const { id, ...fields } = custForm;
@@ -1787,6 +1794,13 @@ export default function App() {
                 <input type="number" min="0" placeholder="Outstanding balance" value={custForm.debt_ngn} onChange={(e) => setCustForm({ ...custForm, debt_ngn: e.target.value })} />
               </div>
             </div>
+            {Number(custForm.debt_ngn || 0) !== 0 && (
+              <div className="inv-field">
+                <label className="inv-label">Where does this balance come from? (required)</label>
+                <input placeholder='e.g. "carried over from previous records, delivery from March"' value={custForm.debt_note || ''} onChange={(e) => setCustForm({ ...custForm, debt_note: e.target.value })} />
+                <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>Every naira on a customer's account must have an origin. This note becomes a permanent ledger entry.</p>
+              </div>
+            )}
             <div className="quick-actions">
               <button className="btn-primary" onClick={saveCustomer}>{custForm.id ? 'Save changes' : 'Add customer'}</button>
               <button className="btn-ghost" onClick={() => { setCustView('list'); setCustForm(null); }}>Cancel</button>
@@ -1795,6 +1809,32 @@ export default function App() {
           </div>
         ) : (
           <div className="card">
+            {custLedger ? (
+              <>
+                <div className="inv-head">
+                  <h3>Ledger · {custLedger.contact.company || custLedger.contact.name}</h3>
+                  <button className="btn-ghost sm" onClick={() => setCustLedger(null)}>← Back to customers</button>
+                </div>
+                <div className="inv-kpis" style={{ marginBottom: 10 }}>
+                  <div className="inv-line"><span>Current balance</span><span className={custLedger.balance > 0 ? 'debt' : ''}>{fmt(custLedger.balance)}</span></div>
+                  <div className="inv-line"><span>Ledger total</span><span>{fmt(custLedger.ledger_total)}</span></div>
+                </div>
+                {custLedger.entries.length === 0 && <p className="muted">No movements yet. Balances appear here once there is an opening entry, invoice, order or payment.</p>}
+                {custLedger.entries.map((e) => (
+                  <div key={e.id} className="ledger-row">
+                    <div className="thread-info">
+                      <b>{e.source === 'opening_balance' ? 'Opening balance' : e.source === 'invoice' ? `Invoice ${e.source_ref || ''}` : e.source === 'order' ? `Order (${e.source_ref || ''})` : e.source === 'payment' ? 'Payment received' : e.source === 'pay_link' ? 'Pay-link payment' : 'Adjustment'}</b>
+                      <span>{String(e.created_at || '').slice(0, 16)} · {e.created_by || 'system'}{e.note ? ` · ${e.note}` : ''}</span>
+                    </div>
+                    <div className="inv-right">
+                      <div className={e.direction === 'debit' ? 'debt' : 'amt'}>{e.direction === 'debit' ? '+' : '−'}{fmt(e.amount_ngn)}</div>
+                      <div className="muted" style={{ fontSize: 11 }}>balance {fmt(e.balance_after)}</div>
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : (
+            <>
             <div className="inv-head"><h3>Customer Book ({contacts.length})</h3>{!isGuest && <button className="btn-primary sm" onClick={openNewCustomer}>+ Add customer</button>}</div>
             {contacts.map((c) => (
               <div key={c.id} className="inv-row">
@@ -1806,10 +1846,13 @@ export default function App() {
                 <div className="inv-right">
                   {c.deal_value_ngn > 0 && <div className="amt">{fmt(c.deal_value_ngn)}</div>}
                   {c.debt_ngn > 0 && <div className="debt">{fmt(c.debt_ngn)}</div>}
+                  <button className="btn-ghost sm" onClick={() => openLedger(c)}><Icon name="chart" size={14} /> Ledger</button>
                   <button className="btn-ghost sm" onClick={() => openEditCustomer(c)}><Icon name="pencil" size={14} /> Edit</button>
                 </div>
               </div>
             ))}
+            </>
+            )}
           </div>
         ))}
 
