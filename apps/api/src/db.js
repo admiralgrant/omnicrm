@@ -354,6 +354,22 @@ CREATE TABLE IF NOT EXISTS ai_audit (
   source TEXT NOT NULL DEFAULT 'rules',   -- rules | llm
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- customer ledger: append-only, every naira on a contact's account has one row
+CREATE TABLE IF NOT EXISTS contact_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  contact_id INTEGER NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('debit','credit')),
+  amount_ngn REAL NOT NULL DEFAULT 0,
+  balance_after REAL NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'adjustment',
+  source_ref TEXT,
+  note TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_contact ON contact_ledger (user_id, contact_id);
 CREATE INDEX IF NOT EXISTS idx_ai_audit ON ai_audit(user_id, created_at);
 `);
 // migration: anonymize previously seeded real-company demo data (NDPR-safe public demos)
