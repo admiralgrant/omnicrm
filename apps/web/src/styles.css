@@ -479,3 +479,16 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 .empty-coach { text-align: center; padding: 34px 18px; border: 1.5px dashed var(--line); border-radius: 14px; margin: 10px 0; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .empty-coach-icon { font-size: 34px; }
 .empty-coach p { max-width: 420px; }
+/* premium polish: grouped nav + departments + kpis */
+.nav-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.nav-group-label { font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: #6d8577; padding: 6px 10px 4px; }
+.drawer .nav-group-label { color: #6d8577; }
+.logout-item { margin-top: auto; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; }
+.nav-item.active { position: relative; }
+.nav-item.active::before { content: ''; position: absolute; left: -12px; top: 20%; height: 60%; width: 3px; border-radius: 3px; background: var(--accent); }
+.dept-pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dept-pills-label { font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-soft); margin-right: 2px; }
+.kpi { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; box-shadow: var(--shadow); }
+.kpi .label { font-size: 10.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-soft); }
+.kpi .value { font-size: 22px; font-weight: 800; letter-spacing: -0.4px; margin-top: 4px; }
+.kpi::after { content: ''; position: absolute; inset: 0 auto auto 0; width: 100%; height: 3px; background: linear-gradient(90deg, var(--accent), transparent); opacity: .85; }
