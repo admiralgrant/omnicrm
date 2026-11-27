@@ -6,6 +6,7 @@ import cors from '@fastify/cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createHmac, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import PDFDocument from 'pdfkit';
@@ -17,6 +18,18 @@ const LOGO_DIR = path.join(process.cwd(), 'uploads', 'logos');
 if (!fs.existsSync(LOGO_DIR)) fs.mkdirSync(LOGO_DIR, { recursive: true });
 const PAY_DIR = path.join(process.cwd(), 'uploads', 'payments');
 if (!fs.existsSync(PAY_DIR)) fs.mkdirSync(PAY_DIR, { recursive: true });
+
+// inbound admin: the owner account that receives new-signup alerts and runs the inbound desk.
+// super admin stays the overhead controller in the platform console.
+const INBOUND_ADMIN_ID = Number(process.env.INBOUND_ADMIN_USER_ID || 1);
+
+// fire the accounts-sheet sync immediately (idempotent queue; 15-min cron remains the backstop)
+function triggerSheetSync() {
+  try {
+    const child = spawn('/root/omnicrm/scripts/sync-accounts-sheet.sh', [], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch { /* best-effort */ }
+}
 
 // data URL -> logo file, returns filename or null
 function saveLogo(dataUrl, userId) {
@@ -87,6 +100,12 @@ app.post('/auth/register', async (req, reply) => {
   }
   db.prepare("INSERT INTO sheet_sync_queue (kind, email, name, org, password) VALUES ('user_signup', ?, ?, ?, ?)")
     .run(email, name, business_name || 'My Business', password);
+  // inbound admin (owner) gets an instant notification + the accounts sheet syncs right away
+  try {
+    db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (?, NULL, ?, ?)')
+      .run(INBOUND_ADMIN_ID, 'new_signup', `New organization registered: ${business_name || 'My Business'} (${email})`);
+  } catch { /* notification is best-effort */ }
+  triggerSheetSync();
   const token = jwt.sign({ id: info.lastInsertRowid, email }, JWT_SECRET, { expiresIn: '7d' });
   return { token, user: { id: info.lastInsertRowid, email, name, business_name: business_name || 'My Business' } };
 });
@@ -1398,6 +1417,15 @@ app.get('/org/logo', async (req, reply) => {
   return reply.header('Content-Type', mime).header('Cache-Control', 'public, max-age=31536000, immutable').send(fs.readFileSync(p));
 });
 
+// ---- inbound desk: the owner's view of new registrations (inbound admin only) ----
+app.get('/inbound/signups', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.id !== INBOUND_ADMIN_ID) return reply.code(403).send({ error: 'Inbound desk is only visible to the inbound admin.' });
+  const signups = db.prepare("SELECT id, email, name, business_name, created_at FROM users WHERE COALESCE(platform_only,0) = 0 AND COALESCE(is_guest,0) = 0 ORDER BY id DESC LIMIT 20").all();
+  const pendingSync = db.prepare('SELECT COUNT(*) AS n FROM sheet_sync_queue WHERE synced = 0').get().n;
+  const syncedCount = db.prepare('SELECT COUNT(*) AS n FROM sheet_sync_queue WHERE synced = 1').get().n;
+  return { signups, pending_sync: pendingSync, synced_count: syncedCount };
+});
+
 // ---- org feature switches (admin) ----
 const ALL_SECTIONS = ['dashboard', 'customers', 'inbox', 'invoices', 'orders', 'mail', 'followups', 'feedback', 'reports', 'pipeline', 'hr', 'ads', 'wallet', 'expenses', 'chat', 'product', 'inventory', 'sales', 'support', 'account', 'profile', 'settings'];
 const TIERS = {
@@ -1520,6 +1548,7 @@ app.post('/staff', { preHandler: [requireAuth, gate('hr')] }, async (req, reply)
     const org = db.prepare('SELECT business_name FROM users WHERE id = ?').get(req.user.id);
     db.prepare("INSERT INTO sheet_sync_queue (kind, email, name, org, dept, role, password) VALUES ('staff_login', ?, ?, ?, ?, ?, ?)")
       .run(email, name, org?.business_name || 'OmniCRM', department || 'sales', role || 'Staff', password);
+    triggerSheetSync();
   }
   return { staff: db.prepare('SELECT * FROM staff WHERE id = ?').get(info.lastInsertRowid) };
 });
