@@ -60,6 +60,8 @@ export default function App() {
   const [expenseReport, setExpenseReport] = useState(null);
   const [inboxChannels, setInboxChannels] = useState([]);
   const [inboxChannel, setInboxChannel] = useState('whatsapp');
+  const [invPays, setInvPays] = useState(null); // {payments, paid_ngn, total, remaining, status}
+  const [payForm, setPayForm] = useState(null); // {amount_ngn, note, proof: File}
   const [tierData, setTierData] = useState(null);
   const [orgProfile, setOrgProfile] = useState(null);
   const [logoPicked, setLogoPicked] = useState(null); // pending logo file for guided preview
@@ -418,6 +420,7 @@ export default function App() {
   const openInvoice = async (i) => {
     const d = await api(`/invoices/${i.id}`);
     setActiveInv(d.invoice); setInvItems(d.items); setPayLink(d.pay_link || ''); setInvView('detail');
+    api(`/invoices/${i.id}/payments`).then(setInvPays).catch(() => setInvPays(null));
   };
   const sendInvoice = async () => {
     await api(`/invoices/${activeInv.id}/send`, { method: 'POST' });
@@ -1796,9 +1799,9 @@ export default function App() {
             </div>
             {Number(custForm.debt_ngn || 0) !== 0 && (
               <div className="inv-field">
-                <label className="inv-label">Where does this balance come from? (required)</label>
+                <label className="inv-label">Where does this balance come from?</label>
                 <input placeholder='e.g. "carried over from previous records, delivery from March"' value={custForm.debt_note || ''} onChange={(e) => setCustForm({ ...custForm, debt_note: e.target.value })} />
-                <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>Every naira on a customer's account must have an origin. This note becomes a permanent ledger entry.</p>
+                <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>Recommended now, but not required to save the customer. Without it, the ledger entry is flagged until the note is filled in from the customer's Ledger view.</p>
               </div>
             )}
             <div className="quick-actions">
@@ -1825,6 +1828,16 @@ export default function App() {
                     <div className="thread-info">
                       <b>{e.source === 'opening_balance' ? 'Opening balance' : e.source === 'invoice' ? `Invoice ${e.source_ref || ''}` : e.source === 'order' ? `Order (${e.source_ref || ''})` : e.source === 'payment' ? 'Payment received' : e.source === 'pay_link' ? 'Pay-link payment' : 'Adjustment'}</b>
                       <span>{String(e.created_at || '').slice(0, 16)} · {e.created_by || 'system'}{e.note ? ` · ${e.note}` : ''}</span>
+                      {e.needs_note === 1 && !isGuest && (
+                        <div className="ledger-note-fix" onClick={(ev) => ev.stopPropagation()}>
+                          <span className="chip draft">origin note missing</span>
+                          <input placeholder='e.g. "carried over from previous records"' onKeyDown={async (ev) => {
+                            if (ev.key !== 'Enter' || !ev.target.value.trim()) return;
+                            await api(`/contacts/${custLedger.contact.id}/ledger/${e.id}`, { method: 'PUT', body: JSON.stringify({ note: ev.target.value.trim() }) });
+                            openLedger(custLedger.contact);
+                          }} />
+                        </div>
+                      )}
                     </div>
                     <div className="inv-right">
                       <div className={e.direction === 'debit' ? 'debt' : 'amt'}>{e.direction === 'debit' ? '+' : '−'}{fmt(e.amount_ngn)}</div>
@@ -2496,6 +2509,59 @@ export default function App() {
                     {!isGuest && opsMode && activeInv.status === 'draft' && <button className="act-btn" onClick={() => openInvEdit(activeInv, invItems)}><span><Icon name="pencil" size={14} /></span>Edit</button>}
                   </div>
                 </div>
+                {invPays && (
+                  <div className="pay-block">
+                    <h3 style={{ marginTop: 14, marginBottom: 8 }}><Icon name="banknote" size={14} /> Payments</h3>
+                    <div className="pay-progress">
+                      <div className="pay-bar"><div className="pay-fill" style={{ width: `${Math.min(100, (invPays.paid_ngn / Math.max(1, invPays.total)) * 100)}%` }} /></div>
+                      <span className="muted">{fmt(invPays.paid_ngn)} paid of {fmt(invPays.total)}{invPays.remaining > 0 ? ` · ${fmt(invPays.remaining)} remaining` : ' · fully paid'}</span>
+                    </div>
+                    {!isGuest && activeInv.status !== 'paid' && (
+                      payForm ? (
+                        <div className="quick-form" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+                          <input type="number" min="1" placeholder="Amount ₦" style={{ width: 130 }} value={payForm.amount_ngn} onChange={(e) => setPayForm({ ...payForm, amount_ngn: e.target.value })} />
+                          <input placeholder="Note (e.g. paid 40k of 100k)" value={payForm.note} onChange={(e) => setPayForm({ ...payForm, note: e.target.value })} />
+                          <label className="logo-upload sm">
+                            <Icon name="file" size={12} /> {payForm.proof ? payForm.proof.name : 'Attach proof (optional)'}
+                            <input type="file" accept="image/*" hidden onChange={(e) => setPayForm({ ...payForm, proof: e.target.files?.[0] || null })} />
+                          </label>
+                          <button className="btn-primary sm" onClick={async () => {
+                            const amount = Number(payForm.amount_ngn);
+                            if (!(amount > 0)) { alert('Enter the amount received.'); return; }
+                            let proof_data_url = null;
+                            if (payForm.proof) {
+                              proof_data_url = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(payForm.proof); });
+                            }
+                            await api(`/invoices/${activeInv.id}/payments`, { method: 'POST', body: JSON.stringify({ amount_ngn: amount, note: payForm.note, proof_data_url }) });
+                            setPayForm(null);
+                            setInvPays(await api(`/invoices/${activeInv.id}/payments`));
+                          }}><Icon name="send" size={13} /> Submit for confirmation</button>
+                          <button className="btn-ghost sm" onClick={() => setPayForm(null)}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button className="btn-ghost sm" style={{ marginTop: 8 }} onClick={() => setPayForm({ amount_ngn: '', note: '', proof: null })}><Icon name="plus" size={13} /> Record a payment (partial or full)</button>
+                      )
+                    )}
+                    {(invPays.payments || []).map((p) => (
+                      <div key={p.id} className="ledger-row">
+                        <div className="thread-info">
+                          <b>{fmt(p.amount_ngn)} · {p.method}{p.note ? ` · ${p.note}` : ''}</b>
+                          <span>{String(p.created_at || '').slice(0, 16)}{p.rep_name ? ` · by ${p.rep_name}` : ''}{p.confirmer_name ? ` · confirmed by ${p.confirmer_name}` : ''}</span>
+                        </div>
+                        <div className="inv-right">
+                          <span className={`chip ${p.status === 'confirmed' ? 'closed' : p.status === 'rejected' ? 'draft' : 'low'}`}>{p.status}</span>
+                          {p.proof_file && <a className="btn-ghost sm" href={`${API}/payments/${p.id}/proof`} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); const w = window.open('', '_blank'); fetch(`${API}/payments/${p.id}/proof`, { headers: { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } }).then((r) => r.blob()).then((b) => { w.location.href = URL.createObjectURL(b); }); }}>Proof</a>}
+                          {opsMode && p.status === 'pending' && (
+                            <>
+                              <button className="btn-ghost sm" onClick={async () => { await api(`/payments/${p.id}/confirm`, { method: 'POST' }); setInvPays(await api(`/invoices/${activeInv.id}/payments`)); const d = await api('/invoices'); setInvoices(d.invoices); setInvCounts(d.counts); setReceivables(d.receivables); setActiveInv({ ...activeInv, status: (invPays.remaining - p.amount_ngn) <= 0.5 ? 'paid' : 'partial', paid_ngn: (activeInv.paid_ngn || 0) + p.amount_ngn }); }}>✓ Confirm</button>
+                              <button className="btn-ghost sm" style={{ color: '#c0392b' }} onClick={async () => { await api(`/payments/${p.id}/reject`, { method: 'POST' }); setInvPays(await api(`/invoices/${activeInv.id}/payments`)); }}>✕ Reject</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             ))}
           </div>
