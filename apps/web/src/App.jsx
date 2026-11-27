@@ -89,6 +89,7 @@ export default function App() {
   const [custView, setCustView] = useState('list'); // list | form
   const [custForm, setCustForm] = useState(null);
   const [custLedger, setCustLedger] = useState(null); // {contact, balance, ledger_total, entries}
+  const [inbound, setInbound] = useState(null); // owner's inbound desk: {signups, pending_sync, synced_count}
   const [tktView, setTktView] = useState('list'); // list | form
   const [tktForm, setTktForm] = useState(null);
   const [feedback, setFeedback] = useState([]);
@@ -203,6 +204,7 @@ export default function App() {
         setTickets(tk.tickets); setTicketCounts(tk.counts);
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
+        if (ac.user.id === 1) api('/inbound/signups').then(setInbound).catch(() => {}); // owner = inbound admin
         setExpenseData(ex); setInboxChannels(ch.channels || []);
         if (ex.see_all) setExpenseReport(await api(`/expenses/report?month=${new Date().toISOString().slice(0, 7)}`));
         try { setTierData(await api('/org/tier')); } catch { /* staff-safe */ }
@@ -789,6 +791,25 @@ export default function App() {
         {view === 'dashboard' && dash && (
           <>
             <h1>{greeting()}{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
+            {inbound && (
+              <div className="card inbound-card">
+                <div className="inv-head">
+                  <h3><Icon name="user" size={14} /> Inbound · New registrations</h3>
+                  <button className="btn-ghost sm" onClick={async () => setInbound(await api('/inbound/signups'))}><Icon name="refresh" size={13} /> Refresh</button>
+                </div>
+                <p className="muted" style={{ fontSize: 12 }}>You are the inbound admin. Every hero-page signup lands here instantly, and the accounts sheet syncs in real time. Super admin remains the overhead controller in the platform console.</p>
+                <div className="inv-kpis" style={{ marginBottom: 8 }}>
+                  <div className="inv-line"><span>Accounts sheet</span><span className={`chip ${inbound.pending_sync > 0 ? 'low' : 'closed'}`}>{inbound.pending_sync > 0 ? `${inbound.pending_sync} waiting to sync` : 'up to date'}</span></div>
+                </div>
+                {inbound.signups.length === 0 && <p className="muted">No signups yet. They will appear here the moment someone registers on the hero page.</p>}
+                {inbound.signups.slice(0, 8).map((s) => (
+                  <div key={s.id} className="inv-line">
+                    <span><b>{s.business_name}</b> · {s.email}</span>
+                    <span className="muted" style={{ fontSize: 11 }}>{String(s.created_at || '').slice(0, 10)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="dept-pills">
               {depts.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}><Icon name={icon} size={15} /> {label}</button>
