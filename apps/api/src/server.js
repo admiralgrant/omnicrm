@@ -15,6 +15,8 @@ const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'receipts');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const LOGO_DIR = path.join(process.cwd(), 'uploads', 'logos');
 if (!fs.existsSync(LOGO_DIR)) fs.mkdirSync(LOGO_DIR, { recursive: true });
+const PAY_DIR = path.join(process.cwd(), 'uploads', 'payments');
+if (!fs.existsSync(PAY_DIR)) fs.mkdirSync(PAY_DIR, { recursive: true });
 
 // data URL -> logo file, returns filename or null
 function saveLogo(dataUrl, userId) {
@@ -142,9 +144,7 @@ app.post('/contacts', { preHandler: requireAuth }, async (req, reply) => {
   const c = req.body || {};
   if (!c.name && !c.company) return reply.code(400).send({ error: 'name or company is required' });
   const opening = Number(c.debt_ngn || 0);
-  if (opening !== 0 && !String(c.debt_note || '').trim()) {
-    return reply.code(400).send({ error: 'This customer has an opening balance. Add a note explaining where the debt comes from (e.g. "carried over from previous records").' });
-  }
+  const hasNote = String(c.debt_note || '').trim().length > 0;
   const { cfg } = tierOf(req.user.id);
   const usage = tierUsage(req.user.id);
   if (cfg.contact_cap > 0 && usage.contacts >= cfg.contact_cap) {
@@ -155,7 +155,8 @@ app.post('/contacts', { preHandler: requireAuth }, async (req, reply) => {
     .run(req.user.id, c.name || null, c.company || null, c.phone || null, c.email || null, c.tags || 'lead', c.status || 'new',
       c.deal_value_ngn || 0, c.next_action || null, c.next_followup_date || null, c.staff_id || null);
   if (opening !== 0) {
-    postLedger(req.user.id, info.lastInsertRowid, opening > 0 ? 'debit' : 'credit', Math.abs(opening), 'opening_balance', null, String(c.debt_note).trim(), req.user.name || req.user.email);
+    // the customer saves even without the origin note; the entry is flagged until the note is filled
+    postLedger(req.user.id, info.lastInsertRowid, opening > 0 ? 'debit' : 'credit', Math.abs(opening), 'opening_balance', null, hasNote ? String(c.debt_note).trim() : null, req.user.name || req.user.email, hasNote ? 0 : 1);
   }
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(info.lastInsertRowid) };
 });
@@ -167,10 +168,8 @@ app.put('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
   const newDebt = Number(c.debt_ngn ?? existing.debt_ngn);
   const diff = newDebt - Number(existing.debt_ngn);
   if (diff !== 0) {
-    if (!String(c.debt_note || '').trim()) {
-      return reply.code(400).send({ error: 'The balance changed. Add a note explaining the adjustment (e.g. "debt written off" or "missed entry corrected").' });
-    }
-    postLedger(req.user.id, existing.id, diff > 0 ? 'debit' : 'credit', Math.abs(diff), 'adjustment', null, String(c.debt_note).trim(), req.user.name || req.user.email);
+    const hasNote = String(c.debt_note || '').trim().length > 0;
+    postLedger(req.user.id, existing.id, diff > 0 ? 'debit' : 'credit', Math.abs(diff), 'adjustment', null, hasNote ? String(c.debt_note).trim() : null, req.user.name || req.user.email, hasNote ? 0 : 1);
   }
   db.prepare('UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, tags = ?, status = ?, deal_value_ngn = ?, staff_id = ? WHERE id = ? AND user_id = ?')
     .run(c.name ?? existing.name, c.company ?? existing.company, c.phone ?? existing.phone, c.email ?? existing.email, c.tags ?? existing.tags, c.status ?? existing.status,
@@ -192,10 +191,8 @@ app.patch('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
   const newDebt = Number(b.debt_ngn ?? c.debt_ngn);
   const diff = newDebt - Number(c.debt_ngn);
   if (diff !== 0) {
-    if (!String(b.debt_note || '').trim()) {
-      return reply.code(400).send({ error: 'The balance changed. Add a note explaining the adjustment.' });
-    }
-    postLedger(req.user.id, c.id, diff > 0 ? 'debit' : 'credit', Math.abs(diff), 'adjustment', null, String(b.debt_note).trim(), req.user.name || req.user.email);
+    const hasNote = String(b.debt_note || '').trim().length > 0;
+    postLedger(req.user.id, c.id, diff > 0 ? 'debit' : 'credit', Math.abs(diff), 'adjustment', null, hasNote ? String(b.debt_note).trim() : null, req.user.name || req.user.email, hasNote ? 0 : 1);
   }
   const next = {
     name: b.name ?? c.name,
@@ -220,6 +217,18 @@ app.get('/contacts/:id/ledger', { preHandler: requireAuth }, async (req, reply) 
   const rows = db.prepare('SELECT * FROM contact_ledger WHERE user_id = ? AND contact_id = ? ORDER BY id DESC LIMIT 200').all(req.user.id, c.id);
   const sum = db.prepare("SELECT COALESCE(SUM(CASE WHEN direction = 'debit' THEN amount_ngn ELSE -amount_ngn END), 0) AS total FROM contact_ledger WHERE user_id = ? AND contact_id = ?").get(req.user.id, c.id);
   return { balance: c.debt_ngn, ledger_total: sum.total, entries: rows };
+});
+
+// fill in the origin note for a flagged ledger entry (the customer was saved first, note comes after)
+app.put('/contacts/:id/ledger/:entryId', { preHandler: requireAuth }, async (req, reply) => {
+  const c = db.prepare('SELECT id FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!c) return reply.code(404).send({ error: 'Contact not found' });
+  const e = db.prepare('SELECT * FROM contact_ledger WHERE id = ? AND contact_id = ? AND user_id = ?').get(req.params.entryId, c.id, req.user.id);
+  if (!e) return reply.code(404).send({ error: 'Ledger entry not found' });
+  const note = String(req.body?.note || '').trim();
+  if (!note) return reply.code(400).send({ error: 'A note explaining the origin of this amount is required.' });
+  db.prepare('UPDATE contact_ledger SET note = ?, needs_note = 0 WHERE id = ?').run(note, e.id);
+  return { ok: true };
 });
 
 // ---- deals ----
@@ -593,12 +602,12 @@ const aiSpend = (userId) => {
 
 // ---- customer ledger: the single door through which any contact balance changes ----
 // every naira on a customer's account must have a row here (origin, note, who, running balance)
-const postLedger = (userId, contactId, direction, amount, source, sourceRef, note, createdBy) => {
+const postLedger = (userId, contactId, direction, amount, source, sourceRef, note, createdBy, needsNote = 0) => {
   const cur = db.prepare('SELECT debt_ngn FROM contacts WHERE id = ? AND user_id = ?').get(contactId, userId);
   const prev = Number(cur?.debt_ngn || 0);
   const bal = direction === 'debit' ? prev + amount : prev - amount;
-  db.prepare('INSERT INTO contact_ledger (user_id, contact_id, direction, amount_ngn, balance_after, source, source_ref, note, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(userId, contactId, direction, amount, bal, source, sourceRef || null, note || null, createdBy || null);
+  db.prepare('INSERT INTO contact_ledger (user_id, contact_id, direction, amount_ngn, balance_after, source, source_ref, note, needs_note, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(userId, contactId, direction, amount, bal, source, sourceRef || null, note || null, needsNote ? 1 : 0, createdBy || null);
   db.prepare('UPDATE contacts SET debt_ngn = ? WHERE id = ? AND user_id = ?').run(bal, contactId, userId);
   return bal;
 };
@@ -2195,6 +2204,96 @@ app.post('/receipts/:id/match', { preHandler: requireAuth }, async (req, reply) 
     }
   }
   return { ok: true };
+});
+
+// ---- partial payments: rep records (with optional proof), accounts confirms, ledger credits on confirm ----
+app.post('/invoices/:id/payments', { preHandler: requireAuth }, async (req, reply) => {
+  if (req.user.guest) return reply.code(403).send({ error: 'Read-only guest' });
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  if (inv.status === 'paid') return reply.code(400).send({ error: 'Invoice already fully paid' });
+  const amount = Number(req.body?.amount_ngn || 0);
+  if (!(amount > 0)) return reply.code(400).send({ error: 'amount_ngn must be greater than 0' });
+  let proofFile = null;
+  const pdu = req.body?.proof_data_url;
+  if (pdu && typeof pdu === 'string' && pdu.startsWith('data:image/')) {
+    const m = pdu.match(/^data:(image\/\w+);base64,(.+)$/s);
+    if (!m) return reply.code(400).send({ error: 'Invalid proof image format' });
+    const buf = Buffer.from(m[2], 'base64');
+    if (buf.length > 8 * 1024 * 1024) return reply.code(413).send({ error: 'Proof image too large (max 8MB)' });
+    proofFile = `pay-${inv.id}-${Date.now()}.${m[1].split('/')[1].replace('jpeg', 'jpg')}`;
+    fs.writeFileSync(path.join(PAY_DIR, proofFile), buf);
+  }
+  const info = db.prepare('INSERT INTO invoice_payments (user_id, invoice_id, contact_id, amount_ngn, method, ref, note, proof_file, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(inv.user_id, inv.id, inv.contact_id, amount, req.body?.method || 'transfer', req.body?.ref || null, req.body?.note || null, proofFile, req.user.staff_id || null);
+  db.prepare('INSERT INTO notifications (user_id, staff_id, kind, message) VALUES (?, NULL, ?, ?)')
+    .run(inv.user_id, 'payment_submitted', `Payment of ₦${amount.toLocaleString()} submitted against ${inv.number} by ${req.user.name || req.user.email}. Waiting for your confirmation.`);
+  return { ok: true, payment: db.prepare('SELECT * FROM invoice_payments WHERE id = ?').get(info.lastInsertRowid) };
+});
+
+app.get('/invoices/:id/payments', { preHandler: requireAuth }, async (req, reply) => {
+  const inv = db.prepare('SELECT id, user_id, number, ngn_total, total, paid_ngn, status FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  const rows = db.prepare(`SELECT p.*, s.name AS rep_name, a.name AS confirmer_name FROM invoice_payments p
+    LEFT JOIN staff s ON s.id = p.created_by LEFT JOIN staff a ON a.id = p.confirmed_by
+    WHERE p.invoice_id = ? AND p.user_id = ? ORDER BY p.id DESC`).all(inv.id, inv.user_id);
+  const owed = inv.ngn_total || inv.total;
+  return { payments: rows, paid_ngn: inv.paid_ngn || 0, total: owed, remaining: Math.max(0, owed - (inv.paid_ngn || 0)), status: inv.status };
+});
+
+app.post('/payments/:id/confirm', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin or accounts can confirm payments.' });
+  const p = db.prepare('SELECT * FROM invoice_payments WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!p) return reply.code(404).send({ error: 'Payment not found' });
+  if (p.status !== 'pending') return reply.code(400).send({ error: `Payment already ${p.status}` });
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(p.invoice_id, req.user.id);
+  if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  db.prepare("UPDATE invoice_payments SET status = 'confirmed', confirmed_by = ?, confirmed_at = datetime('now') WHERE id = ?")
+    .run(req.user.staff_id || null, p.id);
+  const owed = inv.ngn_total || inv.total;
+  const paidNow = (inv.paid_ngn || 0) + p.amount_ngn;
+  const full = paidNow >= owed - 0.5; // rounding tolerance
+  // ledger credit + wallet in
+  postLedger(inv.user_id, inv.contact_id, 'credit', p.amount_ngn, 'payment', inv.number, p.note || `Payment confirmed (${p.method})`, req.user.name || 'accounts');
+  walletMove(inv.user_id, 'in', p.amount_ngn, 'payment', 'invoice', inv.id, `Payment for ${inv.number} (${p.method})`, req.user.staff_id, 'completed');
+  db.prepare('UPDATE invoices SET paid_ngn = ?, status = ? WHERE id = ?').run(paidNow, full ? 'paid' : 'partial', inv.id);
+  if (full) {
+    if (!inv.stock_moved) {
+      const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? AND product_id IS NOT NULL').all(inv.id);
+      for (const it of items) {
+        if (!(Number(it.qty) > 0)) continue;
+        const onHand = db.prepare('SELECT stock FROM products WHERE id = ?').get(it.product_id)?.stock ?? 0;
+        const note = Number(it.qty) > onHand ? `Insufficient stock at payment (had ${onHand}), investigate` : null;
+        stockMove(inv.user_id, it.product_id, 'out', Number(it.qty), 'sale', 'invoice', inv.id, note, req.user.staff_id);
+      }
+      db.prepare('UPDATE invoices SET stock_moved = 1 WHERE id = ?').run(inv.id);
+    }
+    db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
+      .run(inv.user_id, inv.contact_id, `Invoice ${inv.number} fully paid via confirmed payments (${inv.currency} ${Number(inv.total).toLocaleString()})`);
+  }
+  notify(inv.user_id, p.created_by, 'payment_confirmed', `Your payment of ₦${Number(p.amount_ngn).toLocaleString()} on ${inv.number} was confirmed.`);
+  return { ok: true, paid_ngn: paidNow, full };
+});
+
+app.post('/payments/:id/reject', { preHandler: requireAuth }, async (req, reply) => {
+  if (!isOps(req.user)) return reply.code(403).send({ error: 'Only admin or accounts can reject payments.' });
+  const p = db.prepare('SELECT * FROM invoice_payments WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!p) return reply.code(404).send({ error: 'Payment not found' });
+  if (p.status !== 'pending') return reply.code(400).send({ error: `Payment already ${p.status}` });
+  db.prepare("UPDATE invoice_payments SET status = 'rejected', confirmed_by = ?, confirmed_at = datetime('now') WHERE id = ?")
+    .run(req.user.staff_id || null, p.id);
+  notify(p.user_id, p.created_by, 'payment_rejected', `Your payment of ₦${Number(p.amount_ngn).toLocaleString()} was rejected. Check the amount and proof, then resubmit.`);
+  return { ok: true };
+});
+
+app.get('/payments/:id/proof', { preHandler: requireAuth }, async (req, reply) => {
+  const p = db.prepare('SELECT * FROM invoice_payments WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!p || !p.proof_file) return reply.code(404).send({ error: 'No proof attached' });
+  const fp = path.join(PAY_DIR, path.basename(p.proof_file));
+  if (!fs.existsSync(fp)) return reply.code(404).send({ error: 'Proof file missing' });
+  const ext = path.extname(fp).slice(1);
+  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  return reply.header('Content-Type', mime).send(fs.readFileSync(fp));
 });
 
 // ---- sales order workflow: reps raise orders, ops approves -> invoice -> delivery -> payment ----
