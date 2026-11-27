@@ -366,12 +366,39 @@ CREATE TABLE IF NOT EXISTS contact_ledger (
   source TEXT NOT NULL DEFAULT 'adjustment',
   source_ref TEXT,
   note TEXT,
+  needs_note INTEGER NOT NULL DEFAULT 0,
   created_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_contact ON contact_ledger (user_id, contact_id);
+
+-- partial payments on invoices: rep records, accounts confirms, ledger credits on confirm
+CREATE TABLE IF NOT EXISTS invoice_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  invoice_id INTEGER NOT NULL,
+  contact_id INTEGER NOT NULL,
+  amount_ngn REAL NOT NULL,
+  method TEXT DEFAULT 'transfer',
+  ref TEXT,
+  note TEXT,
+  proof_file TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | confirmed | rejected
+  created_by INTEGER,
+  confirmed_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  confirmed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_inv_payments ON invoice_payments (user_id, invoice_id, status);
 CREATE INDEX IF NOT EXISTS idx_ai_audit ON ai_audit(user_id, created_at);
 `);
+
+// migration: invoices.paid_ngn — how much of the invoice has been confirmed paid
+const iCols = db.prepare('PRAGMA table_info(invoices)').all().map((c) => c.name);
+if (!iCols.includes('paid_ngn')) db.exec('ALTER TABLE invoices ADD COLUMN paid_ngn REAL NOT NULL DEFAULT 0');
+// migration: contact_ledger.needs_note — balance registered without origin note yet
+const lCols = db.prepare('PRAGMA table_info(contact_ledger)').all().map((c) => c.name);
+if (!lCols.includes('needs_note')) db.exec('ALTER TABLE contact_ledger ADD COLUMN needs_note INTEGER NOT NULL DEFAULT 0');
 // migration: anonymize previously seeded real-company demo data (NDPR-safe public demos)
 const ANON_MAP = {
   'Alpha Mead Group': ['Zoria Access Limited', '08010000001', 'procurement@zoriaaccess.demo'],
