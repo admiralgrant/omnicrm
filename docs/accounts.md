@@ -1,24 +1,23 @@
 # OmniCRM — Accounts & Logins
 
-Live mirror of the Google Sheet (in the Admirals folder on Drive): https://docs.google.com/spreadsheets/d/1U6I51McNhmCjfA5lkcUaoT01hXdQ4INwKTMZlN2oPcw/edit
-(The sheet is the source of truth; update both when adding accounts. Last updated 2026-11-23.)
+Live mirror of the Google Sheet (in the Admirals folder on Drive): https://docs.google.com/spreadsheets/d/1U6I51McNhmCjfA5lkcUaoT01hXdQ4INwKTMZlN2oPcw
+(The sheet is the source of truth; update both when adding accounts. Last updated 2026-11-27.)
 
-## Super Admin (platform console)
+## Super Admin (platform console, overhead controller)
 
 | Role | Email | Password | Organization |
 |---|---|---|---|
 | SUPER ADMIN | superadmin@omnicrm.com | omnicrm-superadmin | OmniCRM Platform |
 
-Full console: all orgs, enter any org (impersonate, 2h + audited), reset org passwords, per-org feature toggles, audit trail, platform KPIs.
+Full console: all orgs, enter any org (impersonate, 2h + audited), reset org passwords, per-org feature toggles, demo-link creation, audit trail, platform KPIs.
 
-## Regular Admins (org owners)
+## Regular Admin (org owner = inbound admin)
 
 | Role | Email | Password | Organization |
 |---|---|---|---|
-| Owner + platform console | grant@omnicrm.com | omnicrm-demo | Bescon Paints |
-| Admin | zoria@omnicrm.com | zoria-demo | Zoria Access Limited |
-| Admin | besconglobal@omnicrm.com | bescon-demo | Bescon Global Development Limited |
-| Admin | jacoco@omnicrm.com | jacoco-demo | Jacoco Beverage |
+| Owner + inbound admin | grant@omnicrm.com | omnicrm-demo | Bescon Paints |
+
+The owner receives every new signup instantly (in-app notification + Inbound card on the dashboard) and the accounts sheet syncs in real time.
 
 ## Staff (all share: staff-demo)
 
@@ -30,9 +29,14 @@ Full console: all orgs, enter any org (impersonate, 2h + audited), reset org pas
 | Store Manager | ibrahim@omnicrm.com | inventory | stock in/out |
 | HR Officer | ngozi@omnicrm.com | hr | sees all dept channels |
 | Accountant | yemi@omnicrm.com | account | invoices, orders, wallet |
+| Support | chuka@omnicrm.com | chuka-demo | |
 
 ## Guest
 
 | Role | Email | Password | Notes |
 |---|---|---|---|
 | Guest (read-only) | guest@omnicrm.ng | guest-demo | used by demo links |
+
+## Removed (27 Nov)
+
+Tier demo orgs (basic/start/grow/scale @omnicrm.com) and demo admins (zoria@, besconglobal@, jacoco@omnicrm.com) were cleaned from the CRM and the sheet. New signups appear automatically in the sheet via real-time sync.
