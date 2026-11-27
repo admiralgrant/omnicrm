@@ -960,6 +960,7 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
   }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!inv) return reply.code(404).send({ error: 'Invoice not found' });
+  if (inv.status === 'paid') return reply.code(400).send({ error: 'This invoice is already paid. Nothing to do.' });
   // stock deduction for standalone invoices: goods certainly left once payment lands (order-flow invoices deducted at delivery)
   if (!inv.stock_moved) {
     const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? AND product_id IS NOT NULL').all(inv.id);
@@ -1057,9 +1058,11 @@ app.post('/webhooks/paystack', async (req, reply) => {
   if (evt.event === 'charge.success') {
     const meta = evt.data?.metadata || {};
     if (meta.invoice_id) {
-      db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ? AND status != 'paid'").run(meta.invoice_id);
       const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(meta.invoice_id);
-      if (inv) postLedger(inv.user_id, inv.contact_id, 'credit', inv.ngn_total || inv.total, 'pay_link', inv.number, 'Paid via Paystack', 'system');
+      if (inv && inv.status !== 'paid') {
+        db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ? AND status != 'paid'").run(meta.invoice_id);
+        postLedger(inv.user_id, inv.contact_id, 'credit', inv.ngn_total || inv.total, 'pay_link', inv.number, 'Paid via Paystack', 'system');
+      }
     }
   }
   return { ok: true };
