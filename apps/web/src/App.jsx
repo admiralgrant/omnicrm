@@ -163,6 +163,22 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('omnicrm_theme', theme);
   }, [theme]);
+
+  // keep the dashboard fresh: refetch its data every time the user lands on it,
+  // so contact/invoice/order changes made in other sections show up immediately
+  useEffect(() => {
+    if (view !== 'dashboard' || !token) return;
+    (async () => {
+      try {
+        const [d, iv, o] = await Promise.all([
+          api('/dashboard'), api('/invoices'), api('/orders').catch(() => null),
+        ]);
+        setDash(d.kpis);
+        setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
+        if (o) setOrders(o.rows || []);
+      } catch { /* dashboard refresh is best-effort */ }
+    })();
+  }, [view, token]);
   const [chatWatermarks, setChatWatermarks] = useState(() => {
     try { return JSON.parse(localStorage.getItem('omnicrm_chat_seen') || '{}'); } catch { return {}; }
   });
