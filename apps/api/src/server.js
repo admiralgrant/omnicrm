@@ -141,15 +141,22 @@ app.get('/contacts', { preHandler: requireAuth }, async (req) => {
 app.post('/contacts', { preHandler: requireAuth }, async (req, reply) => {
   const c = req.body || {};
   if (!c.name && !c.company) return reply.code(400).send({ error: 'name or company is required' });
+  const opening = Number(c.debt_ngn || 0);
+  if (opening !== 0 && !String(c.debt_note || '').trim()) {
+    return reply.code(400).send({ error: 'This customer has an opening balance. Add a note explaining where the debt comes from (e.g. "carried over from previous records").' });
+  }
   const { cfg } = tierOf(req.user.id);
   const usage = tierUsage(req.user.id);
   if (cfg.contact_cap > 0 && usage.contacts >= cfg.contact_cap) {
     return reply.code(403).send({ error: `Your ${cfg.label} plan includes up to ${cfg.contact_cap.toLocaleString()} contacts. Upgrade to Grow or Scale for more.` });
   }
   const info = db.prepare(`INSERT INTO contacts (user_id, name, company, phone, email, tags, status, debt_ngn, deal_value_ngn, next_action, next_followup_date, staff_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`)
     .run(req.user.id, c.name || null, c.company || null, c.phone || null, c.email || null, c.tags || 'lead', c.status || 'new',
-      c.debt_ngn || 0, c.deal_value_ngn || 0, c.next_action || null, c.next_followup_date || null, c.staff_id || null);
+      c.deal_value_ngn || 0, c.next_action || null, c.next_followup_date || null, c.staff_id || null);
+  if (opening !== 0) {
+    postLedger(req.user.id, info.lastInsertRowid, opening > 0 ? 'debit' : 'credit', Math.abs(opening), 'opening_balance', null, String(c.debt_note).trim(), req.user.name || req.user.email);
+  }
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(info.lastInsertRowid) };
 });
 
@@ -157,9 +164,17 @@ app.put('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
   const existing = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return reply.code(404).send({ error: 'Contact not found' });
   const c = req.body || {};
-  db.prepare('UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, tags = ?, status = ?, debt_ngn = ?, deal_value_ngn = ?, staff_id = ? WHERE id = ? AND user_id = ?')
+  const newDebt = Number(c.debt_ngn ?? existing.debt_ngn);
+  const diff = newDebt - Number(existing.debt_ngn);
+  if (diff !== 0) {
+    if (!String(c.debt_note || '').trim()) {
+      return reply.code(400).send({ error: 'The balance changed. Add a note explaining the adjustment (e.g. "debt written off" or "missed entry corrected").' });
+    }
+    postLedger(req.user.id, existing.id, diff > 0 ? 'debit' : 'credit', Math.abs(diff), 'adjustment', null, String(c.debt_note).trim(), req.user.name || req.user.email);
+  }
+  db.prepare('UPDATE contacts SET name = ?, company = ?, phone = ?, email = ?, tags = ?, status = ?, deal_value_ngn = ?, staff_id = ? WHERE id = ? AND user_id = ?')
     .run(c.name ?? existing.name, c.company ?? existing.company, c.phone ?? existing.phone, c.email ?? existing.email, c.tags ?? existing.tags, c.status ?? existing.status,
-      Number(c.debt_ngn ?? existing.debt_ngn), Number(c.deal_value_ngn ?? existing.deal_value_ngn), c.staff_id ?? existing.staff_id, req.params.id, req.user.id);
+      Number(c.deal_value_ngn ?? existing.deal_value_ngn), c.staff_id ?? existing.staff_id, req.params.id, req.user.id);
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id) };
 });
 
@@ -174,6 +189,14 @@ app.patch('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
   const c = db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!c) return reply.code(404).send({ error: 'Contact not found' });
   const b = req.body || {};
+  const newDebt = Number(b.debt_ngn ?? c.debt_ngn);
+  const diff = newDebt - Number(c.debt_ngn);
+  if (diff !== 0) {
+    if (!String(b.debt_note || '').trim()) {
+      return reply.code(400).send({ error: 'The balance changed. Add a note explaining the adjustment.' });
+    }
+    postLedger(req.user.id, c.id, diff > 0 ? 'debit' : 'credit', Math.abs(diff), 'adjustment', null, String(b.debt_note).trim(), req.user.name || req.user.email);
+  }
   const next = {
     name: b.name ?? c.name,
     company: b.company ?? c.company,
@@ -181,14 +204,22 @@ app.patch('/contacts/:id', { preHandler: requireAuth }, async (req, reply) => {
     email: b.email ?? c.email,
     tags: b.tags ?? c.tags,
     status: b.status ?? c.status,
-    debt_ngn: b.debt_ngn ?? c.debt_ngn,
     deal_value_ngn: b.deal_value_ngn ?? c.deal_value_ngn,
     next_action: b.next_action ?? c.next_action,
     next_followup_date: b.next_followup_date ?? c.next_followup_date,
   };
-  db.prepare(`UPDATE contacts SET name=?, company=?, phone=?, email=?, tags=?, status=?, debt_ngn=?, deal_value_ngn=?, next_action=?, next_followup_date=? WHERE id=?`)
-    .run(next.name, next.company, next.phone, next.email, next.tags, next.status, next.debt_ngn, next.deal_value_ngn, next.next_action, next.next_followup_date, c.id);
+  db.prepare(`UPDATE contacts SET name=?, company=?, phone=?, email=?, tags=?, status=?, deal_value_ngn=?, next_action=?, next_followup_date=? WHERE id=?`)
+    .run(next.name, next.company, next.phone, next.email, next.tags, next.status, next.deal_value_ngn, next.next_action, next.next_followup_date, c.id);
   return { contact: db.prepare('SELECT * FROM contacts WHERE id = ?').get(c.id) };
+});
+
+// customer ledger: the full audit trail of every naira on this contact's account
+app.get('/contacts/:id/ledger', { preHandler: requireAuth }, async (req, reply) => {
+  const c = db.prepare('SELECT id, debt_ngn FROM contacts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!c) return reply.code(404).send({ error: 'Contact not found' });
+  const rows = db.prepare('SELECT * FROM contact_ledger WHERE user_id = ? AND contact_id = ? ORDER BY id DESC LIMIT 200').all(req.user.id, c.id);
+  const sum = db.prepare("SELECT COALESCE(SUM(CASE WHEN direction = 'debit' THEN amount_ngn ELSE -amount_ngn END), 0) AS total FROM contact_ledger WHERE user_id = ? AND contact_id = ?").get(req.user.id, c.id);
+  return { balance: c.debt_ngn, ledger_total: sum.total, entries: rows };
 });
 
 // ---- deals ----
@@ -559,6 +590,28 @@ const aiSpend = (userId) => {
   db.prepare("INSERT INTO org_settings (user_id, key, value) VALUES (?, ?, '1') ON CONFLICT(user_id, key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)")
     .run(userId, key);
 };
+
+// ---- customer ledger: the single door through which any contact balance changes ----
+// every naira on a customer's account must have a row here (origin, note, who, running balance)
+const postLedger = (userId, contactId, direction, amount, source, sourceRef, note, createdBy) => {
+  const cur = db.prepare('SELECT debt_ngn FROM contacts WHERE id = ? AND user_id = ?').get(contactId, userId);
+  const prev = Number(cur?.debt_ngn || 0);
+  const bal = direction === 'debit' ? prev + amount : prev - amount;
+  db.prepare('INSERT INTO contact_ledger (user_id, contact_id, direction, amount_ngn, balance_after, source, source_ref, note, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(userId, contactId, direction, amount, bal, source, sourceRef || null, note || null, createdBy || null);
+  db.prepare('UPDATE contacts SET debt_ngn = ? WHERE id = ? AND user_id = ?').run(bal, contactId, userId);
+  return bal;
+};
+
+// one-time, idempotent: existing contacts with a balance but no ledger rows get an opening entry
+const ledgerBackfill = () => {
+  const rows = db.prepare(`SELECT c.id, c.user_id, c.debt_ngn FROM contacts c WHERE c.debt_ngn != 0 AND NOT EXISTS (SELECT 1 FROM contact_ledger l WHERE l.contact_id = c.id)`).all();
+  for (const r of rows) {
+    db.prepare('INSERT INTO contact_ledger (user_id, contact_id, direction, amount_ngn, balance_after, source, source_ref, note, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(r.user_id, r.id, r.debt_ngn > 0 ? 'debit' : 'credit', Math.abs(r.debt_ngn), r.debt_ngn, 'opening_balance', null, 'Balance brought forward from previous records', 'system');
+  }
+  return rows.length;
+};
 const aiAuditLog = (userId, kind, contactId, body, source) => {
   db.prepare('INSERT INTO ai_audit (user_id, kind, contact_id, body, source) VALUES (?, ?, ?, ?, ?)')
     .run(userId, kind, contactId || null, String(body || '').slice(0, 500), source);
@@ -825,6 +878,8 @@ app.post('/invoices', { preHandler: requireAuth }, async (req, reply) => {
       .run(info.lastInsertRowid, it.description || 'Item', qty, up, r2(qty * up), it.product_id || null);
   }
   const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(info.lastInsertRowid);
+  // the invoice amount is now owed: ledger debit so the balance stays traceable
+  postLedger(req.user.id, contact_id, 'debit', ngnTotal, 'invoice', number, null, req.user.name || req.user.email);
   return { invoice: inv };
 });
 
@@ -892,7 +947,7 @@ app.post('/invoices/:id/paid', { preHandler: requireAuth }, async (req, reply) =
   walletMove(inv.user_id, 'in', inv.ngn_total || inv.total, 'payment', 'invoice', inv.id, `Invoice ${inv.number} payment`, req.user.staff_id, 'completed');
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
     .run(req.user.id, inv.contact_id, `Invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()} ≈ ₦${Number(inv.ngn_total || inv.total).toLocaleString()}) paid ✅`);
-  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.ngn_total || inv.total, inv.contact_id, req.user.id);
+  postLedger(inv.user_id, inv.contact_id, 'credit', inv.ngn_total || inv.total, 'payment', inv.number, 'Payment recorded', req.user.name || req.user.email);
   return { invoice: db.prepare('SELECT * FROM invoices WHERE id = ?').get(inv.id) };
 });
 
@@ -960,7 +1015,7 @@ app.post('/pay/:token/demo-pay', async (req, reply) => {
   db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(inv.id);
   db.prepare("INSERT INTO activities (user_id, contact_id, kind, channel, body) VALUES (?, ?, 'invoice', 'system', ?)")
     .run(inv.user_id, inv.contact_id, `Invoice ${inv.number} (${inv.currency} ${Number(inv.total).toLocaleString()} ≈ ₦${Number(inv.ngn_total || inv.total).toLocaleString()}) paid via pay link (demo)`);
-  db.prepare('UPDATE contacts SET debt_ngn = MAX(0, debt_ngn - ?) WHERE id = ? AND user_id = ?').run(inv.ngn_total || inv.total, inv.contact_id, inv.user_id);
+  postLedger(inv.user_id, inv.contact_id, 'credit', inv.ngn_total || inv.total, 'pay_link', inv.number, 'Paid via pay link (demo)', 'system');
   return { ok: true, status: 'paid', demo: true };
 });
 
@@ -975,6 +1030,8 @@ app.post('/webhooks/paystack', async (req, reply) => {
     const meta = evt.data?.metadata || {};
     if (meta.invoice_id) {
       db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ? AND status != 'paid'").run(meta.invoice_id);
+      const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(meta.invoice_id);
+      if (inv) postLedger(inv.user_id, inv.contact_id, 'credit', inv.ngn_total || inv.total, 'pay_link', inv.number, 'Paid via Paystack', 'system');
     }
   }
   return { ok: true };
@@ -2129,7 +2186,8 @@ app.post('/receipts/:id/match', { preHandler: requireAuth }, async (req, reply) 
   db.prepare('UPDATE payment_receipts SET status = ?, matched_invoice_id = ? WHERE id = ?').run('matched', invoice_id || null, r.id);
   if (invoice_id) {
     db.prepare("UPDATE invoices SET status = 'paid', paid_at = datetime('now') WHERE id = ? AND user_id = ?").run(invoice_id, req.user.id);
-    const inv = db.prepare('SELECT contact_id, ngn_total FROM invoices WHERE id = ?').get(invoice_id);
+    const inv = db.prepare('SELECT contact_id, ngn_total, total, number FROM invoices WHERE id = ?').get(invoice_id);
+    if (inv) postLedger(req.user.id, inv.contact_id, 'credit', inv.ngn_total || inv.total, 'payment', inv.number, `Receipt ${r.id} from ${r.payer_name}`, req.user.name || 'ops');
     const order = db.prepare('SELECT id FROM orders WHERE invoice_id = ?').get(invoice_id);
     if (order) {
       db.prepare("UPDATE orders SET status = 'paid', payment_ref = ?, paid_at = datetime('now') WHERE id = ?").run(`receipt-${r.id}`, order.id);
@@ -2209,6 +2267,7 @@ app.post('/orders/:id/approve', { preHandler: requireAuth }, async (req, reply) 
   const inv = db.prepare(`INSERT INTO invoices (user_id, contact_id, number, status, issue_date, due_date, subtotal, total, tax_rate, tax, currency, fx_rate, ngn_total)
     VALUES (?, ?, ?, 'draft', date('now'), ?, ?, ?, 7.5, ?, 'NGN', 1, ?)`)
     .run(req.user.id, o.contact_id, number, due, finalTotal, finalTotal * 1.075, finalTotal * 0.075, finalTotal);
+  postLedger(req.user.id, o.contact_id, 'debit', finalTotal * 1.075, 'order', `order-${o.id}`, `Order #${o.id} delivered, invoice ${number} raised`, 'system');
   for (const it of items) {
     db.prepare('INSERT INTO invoice_items (invoice_id, description, qty, unit_price, amount, product_id) VALUES (?, ?, ?, ?, ?, ?)')
       .run(inv.lastInsertRowid, it.name, it.qty, it.price, (Number(it.price) || 0) * (Number(it.qty) || 0), it.product_id || null);
@@ -2665,6 +2724,17 @@ app.get('/platform/orgs', { preHandler: [requireAuth, platformOnly] }, async (re
   return { orgs };
 });
 
+// super admin audit: every ledger row in one organization
+app.get('/platform/orgs/:id/ledger', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
+  const u = db.prepare('SELECT id, email, business_name FROM users WHERE id = ?').get(req.params.id);
+  if (!u) return reply.code(404).send({ error: 'Organization not found' });
+  const rows = db.prepare(`SELECT l.*, c.name AS contact_name, c.company FROM contact_ledger l
+    LEFT JOIN contacts c ON c.id = l.contact_id
+    WHERE l.user_id = ? ORDER BY l.id DESC LIMIT 500`).all(u.id);
+  const totals = db.prepare("SELECT COUNT(*) AS entries, COALESCE(SUM(CASE WHEN direction = 'debit' THEN amount_ngn ELSE 0 END), 0) AS debits, COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_ngn ELSE 0 END), 0) AS credits FROM contact_ledger WHERE user_id = ?").get(u.id);
+  return { org: { id: u.id, email: u.email, business_name: u.business_name }, totals, rows };
+});
+
 app.post('/platform/impersonate', { preHandler: [requireAuth, platformOnly] }, async (req, reply) => {
   const { user_id } = req.body || {};
   const u = db.prepare('SELECT * FROM users WHERE id = ? AND COALESCE(is_guest,0) = 0').get(user_id);
@@ -2737,6 +2807,12 @@ app.post('/platform/exit', { preHandler: requireAuth }, async (req, reply) => {
 });
 
 startDigestScheduler();
+
+// bring existing balances into the ledger (one-time, idempotent)
+try {
+  const n = ledgerBackfill();
+  if (n > 0) console.log(`Ledger backfill: ${n} contact(s) given an opening-balance entry`);
+} catch (e) { console.error('Ledger backfill failed', e.message); }
 
 const PORT = process.env.PORT || 4200;
 app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {
