@@ -64,6 +64,7 @@ export default function App() {
   const [payForm, setPayForm] = useState(null); // {amount_ngn, note, proof: File}
   const [invFilter, setInvFilter] = useState('all'); // all | draft | sent | partial | paid | overdue
   const [onboardDone, setOnboardDone] = useState(() => localStorage.getItem('omnicrm_onboard_done') === '1');
+  const [staffOnboardDone, setStaffOnboardDone] = useState(() => localStorage.getItem('omnicrm_staff_onboard_done') === '1');
   const [tierData, setTierData] = useState(null);
   const [orgProfile, setOrgProfile] = useState(null);
   const [logoPicked, setLogoPicked] = useState(null); // pending logo file for guided preview
@@ -662,6 +663,15 @@ export default function App() {
     { label: 'You', keys: ['portal', 'profile', 'settings'] },
   ];
 
+  // one-line role explainers for first-time staff
+  const ROLE_EXPLAINERS = {
+    sales: ['You are in Sales', 'Raise orders for your customers from the Orders section; once approved they become invoices automatically. Follow-ups, the inbox and your pipeline are in the sidebar, and your commissions show under My Portal.'],
+    support: ['You are in Support', 'Customer enquiries arrive in the Inbox: claim a thread, reply, and mark conversations you are handling. Feedback and reports are in the sidebar.'],
+    inventory: ['You are in Inventory', 'Record stock in and out from the Inventory section and keep the product catalog current. Sales and accounts see your stock levels automatically.'],
+    hr: ['You are in HR', 'Manage staff, salaries, advances, leave and shifts from the HR section. Attendance and payroll runs live there too.'],
+    account: ['You are in Accounts', 'Raise invoices, confirm payments and watch the wallet from the sidebar. Receipts from reps wait for your confirmation.'],
+  };
+
   const depts = [
     ['sales', 'trend', 'Sales'],
     ['support', 'buoy', 'Support'],
@@ -810,6 +820,20 @@ export default function App() {
         {view === 'dashboard' && dash && (
           <>
             <h1>{greeting()}{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
+            {me?.dept && !staffOnboardDone && !me?.guest && (
+              (() => {
+                const [title, text] = ROLE_EXPLAINERS[me.dept] || ['Your workspace', 'The sidebar shows only what your department can access. If you need access to something else, ask the owner to change your department.'];
+                return (
+                  <div className="card onboard-card">
+                    <div className="inv-head">
+                      <h3><Icon name="flag" size={14} /> {title}</h3>
+                      <button className="btn-ghost sm" onClick={() => { localStorage.setItem('omnicrm_staff_onboard_done', '1'); setStaffOnboardDone(true); }}>Dismiss</button>
+                    </div>
+                    <p className="muted" style={{ fontSize: 13 }}>{text}</p>
+                  </div>
+                );
+              })()
+            )}
             {!onboardDone && !me?.dept && !me?.guest && (
               (() => {
                 const steps = [
@@ -3471,9 +3495,6 @@ function Login({ mode, onSwitch, onBack, onLogin, onRegister }) {
         <p className="muted switch" onClick={() => onSwitch(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Log in'}
         </p>
-        <p className="muted demo">{sessionStorage.getItem('omnicrm_demo')
-          ? 'Guest demo: guest@omnicrm.ng / guest-demo (read-only)'
-          : 'Demo: grant@omnicrm.com / omnicrm-demo'}</p>
       </div>
     </div>
   );
