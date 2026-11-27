@@ -641,7 +641,7 @@ export default function App() {
     ['inbox', 'chat', 'Inbox'],
     ['invoices', 'receipt', 'Invoicing'],
     ['orders', 'package', 'Orders'],
-    ['mail', 'mail', 'Mail'],
+    ['mail', 'mail', 'Team Chat'],
     ['followups', 'phone', 'Follow-ups'],
     ['feedback', 'file', 'Feedback'],
     ['reports', 'chart', 'Reports'],
