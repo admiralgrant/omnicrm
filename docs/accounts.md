@@ -37,6 +37,17 @@ The owner receives every new signup instantly (in-app notification + Inbound car
 |---|---|---|---|
 | Guest (read-only) | guest@omnicrm.ng | guest-demo | used by demo links |
 
+## Tier demo accounts (testing only)
+
+| Role | Email | Password | Organization |
+|---|---|---|---|
+| Tier Demo - Basic | basic@omnicrm.com | basic-demo | Basic |
+| Tier Demo - Start | start@omnicrm.com | start-demo | Start |
+| Tier Demo - Grow | grow@omnicrm.com | grow-demo | Grow |
+| Tier Demo - Scale | scale@omnicrm.com | scale-demo | Scale |
+
+Basic: 1 staff, 100 contacts, no channels. Start: 3 staff, 500 contacts, WhatsApp only. Grow: 10 staff, 5,000 contacts, all 5 channels. Scale: unlimited.
+
 ## Removed (27 Nov)
 
-Tier demo orgs (basic/start/grow/scale @omnicrm.com) and demo admins (zoria@, besconglobal@, jacoco@omnicrm.com) were cleaned from the CRM and the sheet. New signups appear automatically in the sheet via real-time sync.
+Demo admins (zoria@, besconglobal@, jacoco@omnicrm.com) were cleaned from the CRM and the sheet. New signups appear automatically in the sheet via real-time sync. The login screen no longer shows any demo credentials.
