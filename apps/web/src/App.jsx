@@ -637,10 +637,11 @@ export default function App() {
   const nav = [
     ['dashboard', 'home', 'Dashboard'],
     ['customers', 'users', 'Customers'],
+    ['pipeline', 'kanban', 'Pipeline'],
     ['inbox', 'chat', 'Inbox'],
     ['invoices', 'receipt', 'Invoicing'],
     ['orders', 'package', 'Orders'],
-    ['mail', 'mail', 'In-Mail'],
+    ['mail', 'mail', 'Mail'],
     ['followups', 'phone', 'Follow-ups'],
     ['feedback', 'file', 'Feedback'],
     ['reports', 'chart', 'Reports'],
@@ -652,6 +653,15 @@ export default function App() {
     ['settings', 'sliders', 'Settings'],
   ];
 
+  // visual grouping for the sidebar (flat nav stays the source of truth)
+  const NAV_GROUPS = [
+    { label: null, keys: ['dashboard'] },
+    { label: 'Sell', keys: ['customers', 'pipeline', 'invoices', 'orders'] },
+    { label: 'Serve', keys: ['inbox', 'mail', 'followups', 'feedback'] },
+    { label: 'Grow', keys: ['reports', 'ads', 'wallet', 'expenses'] },
+    { label: 'You', keys: ['portal', 'profile', 'settings'] },
+  ];
+
   const depts = [
     ['sales', 'trend', 'Sales'],
     ['support', 'buoy', 'Support'],
@@ -660,30 +670,37 @@ export default function App() {
     ['hr', 'briefcase', 'HR'],
   ];
 
-  return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
-        {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
-          <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>
+  // grouped sidebar: flat nav filtered by tier/department, rendered under section labels
+  const groupedNav = (closeDrawer) => NAV_GROUPS.map((g) => {
+    const items = nav.filter(([k]) => g.keys.includes(k) && allowed(k));
+    if (!items.length) return null;
+    return (
+      <div key={g.label || 'top'} className="nav-group">
+        {g.label && <div className="nav-group-label">{g.label}</div>}
+        {items.map(([k, icon, label]) => (
+          <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); if (closeDrawer) setDrawerOpen(false); }}>
             <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
             {k === 'mail' && totalChatUnread > 0 && <b className="unread-badge nav-unread">{totalChatUnread}</b>}
           </div>
         ))}
-        <div className="nav-item" onClick={logout}><span className="nav-ic"><Icon name="logout" size={17} /></span>Log out</div>
+      </div>
+    );
+  });
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span className="wm-omni">Omni</span><span className="wm-crm">CRM</span></b><span>beta</span></div></div>
+        {groupedNav(false)}
+        <div className="nav-item logout-item" onClick={logout}><span className="nav-ic"><Icon name="logout" size={17} /></span>Log out</div>
       </aside>
 
       {/* mobile drawer: every destination behind the hamburger */}
       <div className={`drawer-backdrop ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
       <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
-        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span class="wm-omni">Omni</span><span class="wm-crm">CRM</span></b><span>beta</span></div></div>
-        {nav.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
-          <div key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => { setView(k); setDrawerOpen(false); }}>
-            <span className="nav-ic"><Icon name={icon} size={17} /></span>{label}
-            {k === 'mail' && totalChatUnread > 0 && <b className="unread-badge nav-unread">{totalChatUnread}</b>}
-          </div>
-        ))}
-        <div className="nav-item" onClick={logout}><span className="nav-ic"><Icon name="logout" size={17} /></span>Log out</div>
+        <div className="logo clickable" onClick={() => { setAuthMode('landing'); setView('dashboard'); }}>{orgProfile?.logo_url ? <img className="logo-mark-img" src={orgLogoSrc(orgProfile.logo_url)} alt="logo" /> : <BrandMark className="logo-mark-img" />}<div><b><span className="wm-omni">Omni</span><span className="wm-crm">CRM</span></b><span>beta</span></div></div>
+        {groupedNav(true)}
+        <div className="nav-item logout-item" onClick={logout}><span className="nav-ic"><Icon name="logout" size={17} /></span>Log out</div>
       </aside>
 
       <main className="main">
@@ -847,6 +864,7 @@ export default function App() {
               </div>
             )}
             <div className="dept-pills">
+              <span className="dept-pills-label">Departments</span>
               {depts.filter(([k]) => allowed(k)).map(([k, icon, label]) => (
                 <button key={k} className={`pill ${dept === k ? 'active' : ''}`} onClick={() => setDept(k)}><Icon name={icon} size={15} /> {label}</button>
               ))}
