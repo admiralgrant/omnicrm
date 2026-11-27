@@ -204,7 +204,7 @@ export default function App() {
         setTickets(tk.tickets); setTicketCounts(tk.counts);
         setInvoices(iv.invoices); setInvCounts(iv.counts); setReceivables(iv.receivables);
         setFeedback(fb.feedback); setPipeline(pl); setAccount(ac);
-        if (ac.user.id === 1) api('/inbound/signups').then(setInbound).catch(() => {}); // owner = inbound admin
+        if (jwtPayload()?.id === 1) api('/inbound/signups').then(setInbound).catch(() => {}); // owner = inbound admin
         setExpenseData(ex); setInboxChannels(ch.channels || []);
         if (ex.see_all) setExpenseReport(await api(`/expenses/report?month=${new Date().toISOString().slice(0, 7)}`));
         try { setTierData(await api('/org/tier')); } catch { /* staff-safe */ }
