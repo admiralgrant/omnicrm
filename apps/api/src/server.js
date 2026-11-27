@@ -413,6 +413,11 @@ function zuriLog(sessionId, who, body) {
 }
 
 async function zuriBrain(message, history) {
+  // rules answer first, instantly: the LLM is only consulted when no rule matches.
+  // keeps greetings, pricing, features, handoff etc. at ~0ms instead of a network round trip
+  const rule = zuriReply(message);
+  const ruleMatched = !String(rule).startsWith('Let me make sure');
+  if (ruleMatched) return rule;
   // LLM when a key is configured, rules as the always-on fallback
   if (process.env.LLM_API_KEY) {
     const context = history?.length
@@ -424,7 +429,7 @@ async function zuriBrain(message, history) {
     );
     if (llm) return llm.trim();
   }
-  return zuriReply(message);
+  return rule;
 }
 
 const zuriHandoffKeywords = ['human', 'agent', 'real person', 'speak to', 'talk to', 'someone', 'call me', 'contact'];
