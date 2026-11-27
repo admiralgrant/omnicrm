@@ -462,3 +462,10 @@ select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-
 /* customer ledger rows */
 .ledger-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
 .ledger-row:last-child { border-bottom: none; }
+/* invoice payment tracking */
+.pay-block { border-top: 1px solid var(--line); padding-top: 4px; }
+.pay-progress { margin-bottom: 4px; }
+.pay-bar { height: 8px; border-radius: 99px; background: var(--surface-3); overflow: hidden; margin-bottom: 4px; }
+.pay-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), #16c084); transition: width .3s ease; }
+.ledger-note-fix { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.ledger-note-fix input { padding: 6px 10px; font-size: 12.5px; }
