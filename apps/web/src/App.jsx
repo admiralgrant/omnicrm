@@ -62,6 +62,8 @@ export default function App() {
   const [inboxChannel, setInboxChannel] = useState('whatsapp');
   const [invPays, setInvPays] = useState(null); // {payments, paid_ngn, total, remaining, status}
   const [payForm, setPayForm] = useState(null); // {amount_ngn, note, proof: File}
+  const [invFilter, setInvFilter] = useState('all'); // all | draft | sent | partial | paid | overdue
+  const [onboardDone, setOnboardDone] = useState(() => localStorage.getItem('omnicrm_onboard_done') === '1');
   const [tierData, setTierData] = useState(null);
   const [orgProfile, setOrgProfile] = useState(null);
   const [logoPicked, setLogoPicked] = useState(null); // pending logo file for guided preview
@@ -791,6 +793,40 @@ export default function App() {
         {view === 'dashboard' && dash && (
           <>
             <h1>{greeting()}{me?.name ? `, ${me.name.split(' ')[0]}` : ''}{me?.dept ? <span className="dept-tag">{me.dept}</span> : null}{me?.guest ? <span className="dept-tag guest-tag">read-only</span> : null}</h1>
+            {!onboardDone && !me?.dept && !me?.guest && (
+              (() => {
+                const steps = [
+                  { done: contacts.length > 0, label: 'Add your first customer', hint: 'Names, phones and balances live here', act: () => { setView('customers'); openNewCustomer(); } },
+                  { done: products.length > 0, label: 'Add a product', hint: 'Stock and prices power your invoices', act: () => { setView('dashboard'); setDept('product'); openNewProduct(); }, show: allowed('product') },
+                  { done: invoices.length > 0, label: 'Raise your first invoice', hint: 'Branded, VAT-ready, shareable', act: () => { setView('invoices'); newInvoice(); } },
+                  { done: !!orgProfile?.logo_url, label: 'Upload your logo', hint: 'It appears on your invoices and across the app', act: () => setView('profile'), show: allowed('profile') },
+                  { done: (hr?.staff || []).length > 0, label: 'Invite your team', hint: 'Give staff their own logins and departments', act: () => setView('settings'), show: allowed('settings') && !isGuest },
+                ].filter((s) => s.show !== false);
+                const remaining = steps.filter((s) => !s.done).length;
+                if (remaining === 0) return null;
+                return (
+                  <div className="card onboard-card">
+                    <div className="inv-head">
+                      <h3><Icon name="flag" size={14} /> Set up your workspace</h3>
+                      <button className="btn-ghost sm" onClick={() => { localStorage.setItem('omnicrm_onboard_done', '1'); setOnboardDone(true); }}>Dismiss</button>
+                    </div>
+                    <p className="muted" style={{ fontSize: 12.5 }}>{remaining} of {steps.length} steps left. Each one takes about a minute.</p>
+                    <div className="onboard-steps">
+                      {steps.map((s, i) => (
+                        <div key={i} className={`onboard-step ${s.done ? 'done' : ''}`}>
+                          <span className="onboard-check">{s.done ? '✓' : i + 1}</span>
+                          <div className="thread-info">
+                            <b>{s.label}</b>
+                            <span>{s.hint}</span>
+                          </div>
+                          {!s.done && <button className="btn-ghost sm" onClick={s.act}>Start</button>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()
+            )}
             {inbound && (
               <div className="card inbound-card">
                 <div className="inv-head">
@@ -1149,6 +1185,14 @@ export default function App() {
             ) : (
               <div className="card">
                 <div className="inv-head"><h3><Icon name="tag" size={14} /> Product Catalog</h3><button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button></div>
+                {products.length === 0 && (
+                  <div className="empty-coach">
+                    <div className="empty-coach-icon">📦</div>
+                    <b>No products yet</b>
+                    <p className="muted">Products power your invoices and inventory: add a name, price and stock level once, then every invoice picks from this list automatically.</p>
+                    <button className="btn-primary sm" onClick={openNewProduct}>+ Add product</button>
+                  </div>
+                )}
                 {products.map((p) => (
                   <div key={p.id} className="prod">
                     <div className="ticket-info"><b>{p.name}</b><span>{p.sku} · {p.category}</span></div>
@@ -1870,6 +1914,14 @@ export default function App() {
             ) : (
             <>
             <div className="inv-head"><h3>Customer Book ({contacts.length})</h3>{!isGuest && <button className="btn-primary sm" onClick={openNewCustomer}>+ Add customer</button>}</div>
+            {contacts.length === 0 && (
+              <div className="empty-coach">
+                <div className="empty-coach-icon">👥</div>
+                <b>Your customer book is empty</b>
+                <p className="muted">Add your first customer with their name, phone and company. If they already owe you money, you can carry their balance over with a note so every naira stays traceable.</p>
+                {!isGuest && <button className="btn-primary sm" onClick={openNewCustomer}>+ Add customer</button>}
+              </div>
+            )}
             {contacts.map((c) => (
               <div key={c.id} className="inv-row">
                 <div className="thread-ava">{(c.company || c.name || '?')[0]}</div>
@@ -2087,6 +2139,13 @@ export default function App() {
                   }}>Submit order</button>
                   <button className="btn-ghost sm" onClick={() => setOrderForm(null)}>Cancel</button>
                 </div>
+              </div>
+            )}
+            {orders.length === 0 && !orderForm && (
+              <div className="empty-coach">
+                <div className="empty-coach-icon">📋</div>
+                <b>No orders yet</b>
+                <p className="muted">Sales reps raise orders here from your catalog; once approved they become invoices automatically. Raise the first one yourself to see the flow.</p>
               </div>
             )}
             {orders.map((o) => (
@@ -2320,7 +2379,20 @@ export default function App() {
                   <div className="kpi"><div className="label">Sent</div><div className="value">{invCounts.sent || 0}</div></div>
                   <div className="kpi"><div className="label">Paid</div><div className="value">{invCounts.paid || 0}</div></div>
                 </div>
-                {invoices.map((i) => (
+                <div className="channel-tabs" style={{ marginBottom: 10 }}>
+                  {[['all', 'All'], ['draft', 'Drafts'], ['sent', 'Sent'], ['partial', 'Partial'], ['overdue', 'Overdue'], ['paid', 'Paid']].map(([k, label]) => (
+                    <button key={k} className={`channel-tab ${invFilter === k ? 'active' : ''}`} onClick={() => setInvFilter(k)}>{label}</button>
+                  ))}
+                </div>
+                {invoices.length === 0 && (
+                  <div className="empty-coach">
+                    <div className="empty-coach-icon">🧾</div>
+                    <b>No invoices yet</b>
+                    <p className="muted">Raise your first invoice in under a minute: pick a customer, pick products, send the link. Your customer can pay online and the payment lands in your ledger automatically.</p>
+                    {!isGuest && opsMode && <button className="btn-primary sm" onClick={newInvoice}>+ New Invoice</button>}
+                  </div>
+                )}
+                {invoices.filter((i) => invFilter === 'all' || i.status === invFilter).map((i) => (
                   <div key={i.id} className="inv-row" onClick={() => openInvoice(i)}>
                     <div className="thread-ava"><Icon name="receipt" size={14} /></div>
                     <div className="thread-info">
